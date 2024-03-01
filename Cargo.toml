@@ -1,0 +1,3 @@
+[workspace]
+members = ["packages/nes_core"]
+resolver = "2"

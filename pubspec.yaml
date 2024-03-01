@@ -1,0 +1,11 @@
+name: RetroGameBox
+
+packages:
+  - app
+  - packages/*
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dev_dependencies:
+  melos: ^4.1.0

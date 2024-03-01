@@ -1,0 +1,10 @@
+# flutter
+.dart_tool
+pubspec.lock
+
+# cargo
+/target
+
+
+# idea
+.idea
