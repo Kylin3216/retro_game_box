@@ -3,7 +3,8 @@ import 'dart:async';
 
 import 'package:flutter_nes/flutter_nes.dart' as flutter_nes;
 
-void main() {
+void main() async{
+  await flutter_nes.RustLib.init();
   runApp(const MyApp());
 }
 
@@ -21,8 +22,8 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
-    sumResult = flutter_nes.sum(1, 2);
-    sumAsyncResult = flutter_nes.sumAsync(3, 4);
+    sumResult = flutter_nes.sum(a:1, b:2);
+    sumAsyncResult = flutter_nes.sumAsync(a:3, b:4);
   }
 
   @override
