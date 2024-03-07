@@ -1,92 +1,38 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../native/api/nes.dart';
 import 'nes_provider.dart';
 
-class NesWidget extends StatefulWidget {
-  final NesConfig? config;
-  final NesDataProvider dataProvider;
+class NesPainterWidget extends StatefulWidget {
+  final NesEmulator emulator;
 
-  const NesWidget._({super.key, required this.dataProvider, this.config});
-
-  factory NesWidget.assets({
-    Key? key,
-    required String assets,
-    String? name,
-    NesConfig? config,
-  }) =>
-      NesWidget._(
-        key: key,
-        config: config,
-        dataProvider: AssetsNesDataProvider(assets: assets, name: name),
-      );
-
-  factory NesWidget.network({
-    Key? key,
-    required String url,
-    String? name,
-    NesConfig? config,
-  }) =>
-      NesWidget._(
-        key: key,
-        config: config,
-        dataProvider: NetworkNesDataProvider(url: url, name: name),
-      );
-
-  factory NesWidget.file({
-    Key? key,
-    required String path,
-    String? name,
-    NesConfig? config,
-  }) =>
-      NesWidget._(
-        key: key,
-        config: config,
-        dataProvider: FileNesDataProvider(path: path, name: name),
-      );
-
-  factory NesWidget.memory({
-    Key? key,
-    required Uint8List data,
-    String? name,
-    NesConfig? config,
-  }) =>
-      NesWidget._(
-        key: key,
-        config: config,
-        dataProvider: MemoryNesDataProvider(data: data, name: name),
-      );
+  const NesPainterWidget(this.emulator, {super.key});
 
   @override
-  State<NesWidget> createState() => _NesWidgetState();
+  State<NesPainterWidget> createState() => _NesPainterWidgetState();
 }
 
-class _NesWidgetState extends State<NesWidget> {
+class _NesPainterWidgetState extends State<NesPainterWidget> {
   ui.Image? _image;
-  Future<void>? _future;
-  late final NesEmulator emulator = widget.config == null
-      ? NesEmulator.create()
-      : NesEmulator.withConfig(config: widget.config!);
 
   @override
   void initState() {
-    _future = loadAndRun();
+    _runLoop();
     super.initState();
   }
 
-  Future<void> loadAndRun() async {
-    final name = widget.dataProvider.name;
-    final data = await widget.dataProvider.resolveData();
-    await emulator.loadRom(name: name, data: data);
-    emulator.runLoop(onData: (data) {
+  Future<void> _runLoop() async {
+    widget.emulator.runLoopForPainter().listen((data) {
       ui.decodeImageFromPixels(
           data, kNesWidth.toInt(), kNesHeight.toInt(), ui.PixelFormat.rgba8888,
           (result) {
-        setState(() {
-          _image = result;
-        });
+        if (mounted) {
+          setState(() {
+            _image = result;
+          });
+        }
       });
     });
   }
@@ -96,20 +42,12 @@ class _NesWidgetState extends State<NesWidget> {
     return SizedBox(
       width: kNesWidth,
       height: kNesHeight,
-      child: FutureBuilder(
-          future: _future,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.done) {
-              if (_image == null) {
-                return Container();
-              }
-              return CustomPaint(
-                painter: NesPainter(_image!),
-                size: Size(kNesWidth.toDouble(), kNesHeight.toDouble()),
-              );
-            }
-            return const CircularProgressIndicator();
-          }),
+      child: _image == null
+          ? Container()
+          : CustomPaint(
+              painter: NesPainter(_image!),
+              size: Size(kNesWidth.toDouble(), kNesHeight.toDouble()),
+            ),
     );
   }
 }

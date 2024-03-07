@@ -18,14 +18,18 @@ class MyApp extends StatelessWidget {
           child: Column(
             children: [
               Text("Texture Render"),
-              NesWidget.assets(assets: "assets/SuperMario.nes",
-              config: NesConfigEx.create(
-                filter: VideoFilter.pixellate,
-                fps: 30
-              ),),
+              NesWidget.assets(
+                assets: "assets/SuperMario.nes",
+                config: NesConfigEx.create(
+                  filter: VideoFilter.pixellate,
+                ),
+                renderType: NesRenderType.texture,
+              ),
               Divider(),
               Text("Decode Using decodeImageFromPixels Then paint"),
-              NesTextureWidget.assets(assets: "assets/SuperMario.nes"),
+              NesWidget.assets(
+                assets: "assets/SuperMario.nes",
+              ),
             ],
           ),
         ),

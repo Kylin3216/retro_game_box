@@ -134,7 +134,7 @@ fn get_rom_tests(directory: &str) -> (PathBuf, Vec<RomTest>) {
 fn load_control_deck<P: AsRef<Path>>(path: P) -> ControlDeck {
     let path = path.as_ref();
     let mut rom = BufReader::new(File::open(path).expect("failed to open path"));
-    let mut deck = ControlDeck::new(RamState::AllZeros);
+    let mut deck = ControlDeck::new();
     let mut data = vec![];
     rom.read_to_end(&mut data).unwrap();
     deck.load_rom(path.to_string_lossy().to_string(), data)

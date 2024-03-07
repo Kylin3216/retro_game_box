@@ -47,10 +47,10 @@ use anyhow::Result;
 /// |-----------------| $0000 |-----------------|
 #[derive(Clone, Serialize, Deserialize)]
 #[must_use]
-pub struct CpuBus {
+pub struct Bus {
     wram: Vec<u8>,
     region: NesRegion,
-    ram_state: RamState,
+    pub ram_state: RamState,
     battery_backed: bool,
     prg_ram: Vec<u8>,
     prg_ram_protect: bool,
@@ -66,13 +66,13 @@ pub struct CpuBus {
     open_bus: u8,
 }
 
-impl Default for CpuBus {
+impl Default for Bus {
     fn default() -> Self {
         Self::new(RamState::default())
     }
 }
 
-impl CpuBus {
+impl Bus {
     const WRAM_SIZE: usize = 0x0800; // 2K NES Work Ram available to the CPU
 
     pub fn new(ram_state: RamState) -> Self {
@@ -337,7 +337,7 @@ impl CpuBus {
     }
 }
 
-impl Clock for CpuBus {
+impl Clock for Bus {
     fn clock(&mut self) -> usize {
         self.cycle = self.cycle.wrapping_add(1);
         self.apu.clock();
@@ -360,7 +360,7 @@ impl Clock for CpuBus {
     }
 }
 
-impl Mem for CpuBus {
+impl Mem for Bus {
     fn read(&mut self, addr: u16, _access: Access) -> u8 {
         let val = match addr {
             0x0000..=0x07FF => self.wram[addr as usize],
@@ -468,7 +468,7 @@ impl Mem for CpuBus {
     }
 }
 
-impl Regional for CpuBus {
+impl Regional for Bus {
     #[inline]
     fn region(&self) -> NesRegion {
         self.region
@@ -482,7 +482,7 @@ impl Regional for CpuBus {
     }
 }
 
-impl Reset for CpuBus {
+impl Reset for Bus {
     fn reset(&mut self, kind: ResetKind) {
         if kind == ResetKind::Hard {
             RamState::fill(&mut self.wram, self.ram_state);
@@ -492,7 +492,7 @@ impl Reset for CpuBus {
     }
 }
 
-impl core::fmt::Debug for CpuBus {
+impl core::fmt::Debug for Bus {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Bus")
             .field("wram_len", &self.wram.len())
@@ -524,7 +524,7 @@ mod test {
 
     #[test]
     fn load_cart_values() {
-        let mut bus = CpuBus::default();
+        let mut bus = Bus::default();
         #[rustfmt::skip]
             let rom: [u8; 16] = [
             0x4E, 0x45, 0x53, 0x1A,
@@ -553,7 +553,7 @@ mod test {
 
     #[test]
     fn load_cart_chr_rom() {
-        let mut bus = CpuBus::default();
+        let mut bus = Bus::default();
         let mut cart = Cart::empty();
         cart.chr_rom = vec![0x66; 0x2000];
         bus.load_cart(cart);
@@ -580,7 +580,7 @@ mod test {
 
     #[test]
     fn load_cart_chr_ram() {
-        let mut bus = CpuBus::default();
+        let mut bus = Bus::default();
         let mut cart = Cart::empty();
         cart.chr_rom = vec![];
         cart.chr_ram = vec![0x66; 0x2000];
@@ -608,7 +608,7 @@ mod test {
 
     #[test]
     fn genie_codes() {
-        let mut bus = CpuBus::default();
+        let mut bus = Bus::default();
         let mut cart = Cart::empty();
 
         let code = "YYKPOYZZ"; // The Legend of Zelda: New character with 8 Hearts
@@ -630,7 +630,7 @@ mod test {
 
     #[test]
     fn clock() {
-        let mut bus = CpuBus::default();
+        let mut bus = Bus::default();
 
         bus.clock_to(12);
         assert_eq!(bus.ppu.master_clock(), 12, "ppu clock");
@@ -640,7 +640,7 @@ mod test {
 
     #[test]
     fn read_write_ram() {
-        let mut bus = CpuBus::default();
+        let mut bus = Bus::default();
 
         bus.write(0x0001, 0x66, Access::Write);
         assert_eq!(bus.peek(0x0001, Access::Read), 0x66, "peek ram");

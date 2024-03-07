@@ -2,20 +2,20 @@ use std::{thread, time};
 
 pub struct Fps {
     last_tick_time: time::Instant,
-    fps: u32,
+    fps: f32,
     fps_in_nanos: f32,
 }
 
 
 impl Fps {
-    pub fn new(fps: u32) -> Fps {
+    pub fn new(fps: f32) -> Fps {
         Fps {
             last_tick_time: time::Instant::now(),
             fps,
-            fps_in_nanos: (1. / fps as f32) * 1_000_000_000.,
+            fps_in_nanos: (1. / fps) * 1_000_000_000.,
         }
     }
-    pub fn fps(&self) -> u32 {
+    pub fn fps(&self) -> f32 {
         self.fps
     }
 

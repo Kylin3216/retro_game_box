@@ -15,7 +15,6 @@ extension NesConfigEx on NesConfig {
     FourPlayer fourPlayer = FourPlayer.disabled,
     bool zapper = false,
     List<String> genieCodes = const [],
-    int fps = 60,
   }) {
     return NesConfig.create(
       filter: filter,
@@ -24,7 +23,6 @@ extension NesConfigEx on NesConfig {
       fourPlayer: fourPlayer,
       zapper: zapper,
       genieCodes: genieCodes,
-      fps: fps,
     );
   }
 }

@@ -49,17 +49,27 @@ class NesEmulator extends RustOpaque {
         data: data,
       );
 
-  Future<void> runLoop(
-          {required FutureOr<void> Function(Uint8List) onData, dynamic hint}) =>
-      RustLib.instance.api.nesEmulatorRunLoop(
+  Future<void> runLoopForCallback(
+          {required FutureOr<void> Function(Uint8List) callback,
+          dynamic hint}) =>
+      RustLib.instance.api.nesEmulatorRunLoopForCallback(
         that: this,
-        onData: onData,
+        callback: callback,
+      );
+
+  Stream<Uint8List> runLoopForPainter({dynamic hint}) =>
+      RustLib.instance.api.nesEmulatorRunLoopForPainter(
+        that: this,
       );
 
   Future<void> runLoopForTexture({required NesTexture texture, dynamic hint}) =>
       RustLib.instance.api.nesEmulatorRunLoopForTexture(
         that: this,
         texture: texture,
+      );
+
+  void stopLoop({dynamic hint}) => RustLib.instance.api.nesEmulatorStopLoop(
+        that: this,
       );
 
   static NesEmulator withConfig({required NesConfig config, dynamic hint}) =>
@@ -86,7 +96,6 @@ class NesConfig {
   final FourPlayer fourPlayer;
   final bool zapper;
   final List<String> genieCodes;
-  final int fps;
 
   const NesConfig({
     required this.filter,
@@ -95,7 +104,6 @@ class NesConfig {
     required this.fourPlayer,
     required this.zapper,
     required this.genieCodes,
-    required this.fps,
   });
 
   static NesConfig create(
@@ -105,7 +113,6 @@ class NesConfig {
           required FourPlayer fourPlayer,
           required bool zapper,
           required List<String> genieCodes,
-          required int fps,
           dynamic hint}) =>
       RustLib.instance.api.nesConfigCreate(
           filter: filter,
@@ -114,7 +121,6 @@ class NesConfig {
           fourPlayer: fourPlayer,
           zapper: zapper,
           genieCodes: genieCodes,
-          fps: fps,
           hint: hint);
 
   @override
@@ -124,8 +130,7 @@ class NesConfig {
       ramState.hashCode ^
       fourPlayer.hashCode ^
       zapper.hashCode ^
-      genieCodes.hashCode ^
-      fps.hashCode;
+      genieCodes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -137,6 +142,5 @@ class NesConfig {
           ramState == other.ramState &&
           fourPlayer == other.fourPlayer &&
           zapper == other.zapper &&
-          genieCodes == other.genieCodes &&
-          fps == other.fps;
+          genieCodes == other.genieCodes;
 }

@@ -5,11 +5,12 @@ use serde::{Deserialize, Serialize};
 use core::f64::consts::PI;
 use lazy_static::lazy_static;
 use num_traits::Float;
+
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[must_use]
 pub enum VideoFilter {
-    Pixellate,
     #[default]
+    Pixellate,
     Ntsc,
 }
 

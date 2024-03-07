@@ -7,7 +7,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use crate::{
     apu::{Apu, Channel},
-    bus::CpuBus,
+    bus::Bus,
     cart::Cart,
     common::{Clock, ResetKind, NesRegion, Regional, Reset},
     input::{FourPlayer, Joypad, Player, Zapper},
@@ -30,6 +30,7 @@ use instr::{
 use serde::{Deserialize, Serialize};
 use core::fmt::{self, Write};
 use anyhow::Result;
+use crate::mem::RamState;
 
 pub mod instr;
 
@@ -101,7 +102,7 @@ pub struct Cpu {
     // y register
     status: Status,
     // Status Registers
-    bus: CpuBus,
+    bus: Bus,
     instr: Instr,
     // The currently executing instruction
     abs_addr: u16,
@@ -150,7 +151,7 @@ impl Cpu {
     const POWER_ON_SP: u8 = 0xFD;
     const SP_BASE: u16 = 0x0100; // Stack-pointer starting address
 
-    pub fn new(bus: CpuBus) -> Self {
+    pub fn new(bus: Bus) -> Self {
         let mut cpu = Self {
             cycle: 0,
             region: NesRegion::default(),
@@ -303,6 +304,10 @@ impl Cpu {
     #[inline]
     pub const fn zapper(&self) -> &Zapper {
         self.bus.zapper()
+    }
+    #[inline]
+    pub const fn ram_state(&self) -> RamState {
+        self.bus.ram_state
     }
 
     #[inline]
@@ -1174,7 +1179,7 @@ mod tests {
     #[test]
     fn cycle_timing() {
         use super::*;
-        let mut cpu = Cpu::new(CpuBus::default());
+        let mut cpu = Cpu::new(Bus::default());
         let cart = Cart::empty();
         cpu.load_cart(cart);
         cpu.reset(ResetKind::Hard);

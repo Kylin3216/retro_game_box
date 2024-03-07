@@ -67,7 +67,6 @@ fn wire_NesConfig_create_impl(
             let api_four_player = <crate::api::mirrors::FourPlayer>::sse_decode(&mut deserializer);
             let api_zapper = <bool>::sse_decode(&mut deserializer);
             let api_genie_codes = <Vec<String>>::sse_decode(&mut deserializer);
-            let api_fps = <u32>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse((move || {
                 Result::<_, ()>::Ok(crate::api::nes::NesConfig::create(
@@ -77,7 +76,6 @@ fn wire_NesConfig_create_impl(
                     api_four_player,
                     api_zapper,
                     api_genie_codes,
-                    api_fps,
                 ))
             })())
         },
@@ -191,7 +189,7 @@ fn wire_NesEmulator_load_rom_impl(
         },
     )
 }
-fn wire_NesEmulator_run_loop_impl(
+fn wire_NesEmulator_run_loop_for_callback_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -199,7 +197,7 @@ fn wire_NesEmulator_run_loop_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "NesEmulator_run_loop",
+            debug_name: "NesEmulator_run_loop_for_callback",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -216,18 +214,57 @@ fn wire_NesEmulator_run_loop_impl(
             let api_that = <RustOpaqueMoi<
                 flutter_rust_bridge::for_generated::rust_async::RwLock<NesEmulator>,
             >>::sse_decode(&mut deserializer);
-            let api_on_data = decode_DartFn_Inputs_list_prim_u_8_strict_Output_unit(
+            let api_callback = decode_DartFn_Inputs_list_prim_u_8_strict_Output_unit(
                 <flutter_rust_bridge::DartOpaque>::sse_decode(&mut deserializer),
             );
             deserializer.end();
             move |context| async move {
                 transform_result_sse(
                     (move || async move {
-                        let mut api_that = api_that.rust_auto_opaque_decode_ref_mut();
-                        crate::api::nes::NesEmulator::run_loop(&mut api_that, api_on_data).await
+                        let api_that = api_that.rust_auto_opaque_decode_ref();
+                        crate::api::nes::NesEmulator::run_loop_for_callback(&api_that, api_callback)
+                            .await
                     })()
                     .await,
                 )
+            }
+        },
+    )
+}
+fn wire_NesEmulator_run_loop_for_painter_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "NesEmulator_run_loop_for_painter",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Stream,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::rust_async::RwLock<NesEmulator>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse((move || {
+                    let api_that = api_that.rust_auto_opaque_decode_ref();
+                    crate::api::nes::NesEmulator::run_loop_for_painter(
+                        &api_that,
+                        StreamSink::new(context.rust2dart_context().stream_sink::<_, Vec<u8>>()),
+                    )
+                })())
             }
         },
     )
@@ -261,10 +298,42 @@ fn wire_NesEmulator_run_loop_for_texture_impl(
             deserializer.end();
             move |context| {
                 transform_result_sse((move || {
-                    let mut api_that = api_that.rust_auto_opaque_decode_ref_mut();
-                    crate::api::nes::NesEmulator::run_loop_for_texture(&mut api_that, api_texture)
+                    let api_that = api_that.rust_auto_opaque_decode_ref();
+                    crate::api::nes::NesEmulator::run_loop_for_texture(&api_that, api_texture)
                 })())
             }
+        },
+    )
+}
+fn wire_NesEmulator_stop_loop_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "NesEmulator_stop_loop",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <RustOpaqueMoi<
+                flutter_rust_bridge::for_generated::rust_async::RwLock<NesEmulator>,
+            >>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse((move || {
+                let api_that = api_that.rust_auto_opaque_decode_ref();
+                Result::<_, ()>::Ok(crate::api::nes::NesEmulator::stop_loop(&api_that))
+            })())
         },
     )
 }
@@ -596,7 +665,6 @@ impl SseDecode for crate::api::nes::NesConfig {
         let mut var_fourPlayer = <crate::api::mirrors::FourPlayer>::sse_decode(deserializer);
         let mut var_zapper = <bool>::sse_decode(deserializer);
         let mut var_genieCodes = <Vec<String>>::sse_decode(deserializer);
-        let mut var_fps = <u32>::sse_decode(deserializer);
         return crate::api::nes::NesConfig {
             filter: var_filter,
             region: var_region,
@@ -604,7 +672,6 @@ impl SseDecode for crate::api::nes::NesConfig {
             four_player: var_fourPlayer,
             zapper: var_zapper,
             genie_codes: var_genieCodes,
-            fps: var_fps,
         };
     }
 }
@@ -660,13 +727,6 @@ impl SseDecode for crate::api::mirrors::RamState {
     }
 }
 
-impl SseDecode for u32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        deserializer.cursor.read_u32::<NativeEndian>().unwrap()
-    }
-}
-
 impl SseDecode for u8 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -707,12 +767,13 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        7 => wire_NesEmulator_handle_button_impl(port, ptr, rust_vec_len, data_len),
+        8 => wire_NesEmulator_handle_button_impl(port, ptr, rust_vec_len, data_len),
         4 => wire_NesEmulator_load_rom_impl(port, ptr, rust_vec_len, data_len),
-        5 => wire_NesEmulator_run_loop_impl(port, ptr, rust_vec_len, data_len),
-        6 => wire_NesEmulator_run_loop_for_texture_impl(port, ptr, rust_vec_len, data_len),
-        8 => wire_NesTexture_create_impl(port, ptr, rust_vec_len, data_len),
-        9 => wire_NesTexture_render_impl(port, ptr, rust_vec_len, data_len),
+        5 => wire_NesEmulator_run_loop_for_callback_impl(port, ptr, rust_vec_len, data_len),
+        6 => wire_NesEmulator_run_loop_for_painter_impl(port, ptr, rust_vec_len, data_len),
+        7 => wire_NesEmulator_run_loop_for_texture_impl(port, ptr, rust_vec_len, data_len),
+        10 => wire_NesTexture_create_impl(port, ptr, rust_vec_len, data_len),
+        11 => wire_NesTexture_render_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -727,8 +788,9 @@ fn pde_ffi_dispatcher_sync_impl(
     match func_id {
         1 => wire_NesConfig_create_impl(ptr, rust_vec_len, data_len),
         2 => wire_NesEmulator_create_impl(ptr, rust_vec_len, data_len),
+        9 => wire_NesEmulator_stop_loop_impl(ptr, rust_vec_len, data_len),
         3 => wire_NesEmulator_with_config_impl(ptr, rust_vec_len, data_len),
-        10 => wire_NesTexture_id_impl(ptr, rust_vec_len, data_len),
+        12 => wire_NesTexture_id_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -842,7 +904,6 @@ impl flutter_rust_bridge::IntoDart for crate::api::nes::NesConfig {
             self.four_player.into_into_dart().into_dart(),
             self.zapper.into_into_dart().into_dart(),
             self.genie_codes.into_into_dart().into_dart(),
-            self.fps.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -1066,7 +1127,6 @@ impl SseEncode for crate::api::nes::NesConfig {
         <crate::api::mirrors::FourPlayer>::sse_encode(self.four_player, serializer);
         <bool>::sse_encode(self.zapper, serializer);
         <Vec<String>>::sse_encode(self.genie_codes, serializer);
-        <u32>::sse_encode(self.fps, serializer);
     }
 }
 
@@ -1129,13 +1189,6 @@ impl SseEncode for crate::api::mirrors::RamState {
             },
             serializer,
         );
-    }
-}
-
-impl SseEncode for u32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        serializer.cursor.write_u32::<NativeEndian>(self).unwrap();
     }
 }
 

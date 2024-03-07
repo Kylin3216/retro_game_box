@@ -71,7 +71,6 @@ abstract class RustLibApi extends BaseApi {
       required FourPlayer fourPlayer,
       required bool zapper,
       required List<String> genieCodes,
-      required int fps,
       dynamic hint});
 
   NesEmulator nesEmulatorCreate({dynamic hint});
@@ -89,13 +88,18 @@ abstract class RustLibApi extends BaseApi {
       required List<int> data,
       dynamic hint});
 
-  Future<void> nesEmulatorRunLoop(
+  Future<void> nesEmulatorRunLoopForCallback(
       {required NesEmulator that,
-      required FutureOr<void> Function(Uint8List) onData,
+      required FutureOr<void> Function(Uint8List) callback,
       dynamic hint});
+
+  Stream<Uint8List> nesEmulatorRunLoopForPainter(
+      {required NesEmulator that, dynamic hint});
 
   Future<void> nesEmulatorRunLoopForTexture(
       {required NesEmulator that, required NesTexture texture, dynamic hint});
+
+  void nesEmulatorStopLoop({required NesEmulator that, dynamic hint});
 
   NesEmulator nesEmulatorWithConfig({required NesConfig config, dynamic hint});
 
@@ -139,7 +143,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       required FourPlayer fourPlayer,
       required bool zapper,
       required List<String> genieCodes,
-      required int fps,
       dynamic hint}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
@@ -150,7 +153,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_four_player(fourPlayer, serializer);
         sse_encode_bool(zapper, serializer);
         sse_encode_list_String(genieCodes, serializer);
-        sse_encode_u_32(fps, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
       },
       codec: SseCodec(
@@ -158,15 +160,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeErrorData: null,
       ),
       constMeta: kNesConfigCreateConstMeta,
-      argValues: [
-        filter,
-        region,
-        ramState,
-        fourPlayer,
-        zapper,
-        genieCodes,
-        fps
-      ],
+      argValues: [filter, region, ramState, fourPlayer, zapper, genieCodes],
       apiImpl: this,
       hint: hint,
     ));
@@ -180,8 +174,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           "ramState",
           "fourPlayer",
           "zapper",
-          "genieCodes",
-          "fps"
+          "genieCodes"
         ],
       );
 
@@ -225,7 +218,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         sse_encode_nes_button(button, serializer);
         sse_encode_bool(pressed, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 7, port: port_);
+            funcId: 8, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -276,17 +269,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  Future<void> nesEmulatorRunLoop(
+  Future<void> nesEmulatorRunLoopForCallback(
       {required NesEmulator that,
-      required FutureOr<void> Function(Uint8List) onData,
+      required FutureOr<void> Function(Uint8List) callback,
       dynamic hint}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
             that, serializer);
         sse_encode_DartFn_Inputs_list_prim_u_8_strict_Output_unit(
-            onData, serializer);
+            callback, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 5, port: port_);
       },
@@ -294,16 +287,45 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         decodeSuccessData: sse_decode_unit,
         decodeErrorData: sse_decode_AnyhowException,
       ),
-      constMeta: kNesEmulatorRunLoopConstMeta,
-      argValues: [that, onData],
+      constMeta: kNesEmulatorRunLoopForCallbackConstMeta,
+      argValues: [that, callback],
       apiImpl: this,
       hint: hint,
     ));
   }
 
-  TaskConstMeta get kNesEmulatorRunLoopConstMeta => const TaskConstMeta(
-        debugName: "NesEmulator_run_loop",
-        argNames: ["that", "onData"],
+  TaskConstMeta get kNesEmulatorRunLoopForCallbackConstMeta =>
+      const TaskConstMeta(
+        debugName: "NesEmulator_run_loop_for_callback",
+        argNames: ["that", "callback"],
+      );
+
+  @override
+  Stream<Uint8List> nesEmulatorRunLoopForPainter(
+      {required NesEmulator that, dynamic hint}) {
+    return handler.executeStream(StreamTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
+            that, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 6, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_prim_u_8_strict,
+        decodeErrorData: sse_decode_AnyhowException,
+      ),
+      constMeta: kNesEmulatorRunLoopForPainterConstMeta,
+      argValues: [that],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kNesEmulatorRunLoopForPainterConstMeta =>
+      const TaskConstMeta(
+        debugName: "NesEmulator_run_loop_for_painter",
+        argNames: ["that"],
       );
 
   @override
@@ -312,12 +334,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
             that, serializer);
         sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesTexture(
             texture, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 6, port: port_);
+            funcId: 7, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -334,6 +356,31 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(
         debugName: "NesEmulator_run_loop_for_texture",
         argNames: ["that", "texture"],
+      );
+
+  @override
+  void nesEmulatorStopLoop({required NesEmulator that, dynamic hint}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kNesEmulatorStopLoopConstMeta,
+      argValues: [that],
+      apiImpl: this,
+      hint: hint,
+    ));
+  }
+
+  TaskConstMeta get kNesEmulatorStopLoopConstMeta => const TaskConstMeta(
+        debugName: "NesEmulator_stop_loop",
+        argNames: ["that"],
       );
 
   @override
@@ -368,7 +415,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_i_64(handle, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 8, port: port_);
+            funcId: 10, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData:
@@ -394,7 +441,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesTexture(
             that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_i_64,
@@ -422,7 +469,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             that, serializer);
         sse_encode_list_prim_u_8_loose(data, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 9, port: port_);
+            funcId: 11, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -501,6 +548,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   NesEmulator
       dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return NesEmulator.dcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  NesEmulator
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return NesEmulator.dcoDecode(raw as List<dynamic>);
@@ -615,8 +670,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   NesConfig dco_decode_nes_config(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return NesConfig(
       filter: dco_decode_video_filter(arr[0]),
       region: dco_decode_nes_region(arr[1]),
@@ -624,7 +679,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       fourPlayer: dco_decode_four_player(arr[3]),
       zapper: dco_decode_bool(arr[4]),
       genieCodes: dco_decode_list_String(arr[5]),
-      fps: dco_decode_u_32(arr[6]),
     );
   }
 
@@ -655,12 +709,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   RamState dco_decode_ram_state(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return RamState.values[raw as int];
-  }
-
-  @protected
-  int dco_decode_u_32(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw as int;
   }
 
   @protected
@@ -715,6 +763,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   NesEmulator
       sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return NesEmulator.sseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  NesEmulator
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return NesEmulator.sseDecode(
@@ -844,15 +901,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_fourPlayer = sse_decode_four_player(deserializer);
     var var_zapper = sse_decode_bool(deserializer);
     var var_genieCodes = sse_decode_list_String(deserializer);
-    var var_fps = sse_decode_u_32(deserializer);
     return NesConfig(
         filter: var_filter,
         region: var_region,
         ramState: var_ramState,
         fourPlayer: var_fourPlayer,
         zapper: var_zapper,
-        genieCodes: var_genieCodes,
-        fps: var_fps);
+        genieCodes: var_genieCodes);
   }
 
   @protected
@@ -888,12 +943,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return RamState.values[inner];
-  }
-
-  @protected
-  int sse_decode_u_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint32();
   }
 
   @protected
@@ -946,6 +995,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void
       sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
+          NesEmulator self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(self.sseEncode(move: false), serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedrust_asyncRwLockNesEmulator(
           NesEmulator self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(self.sseEncode(move: false), serializer);
@@ -1080,7 +1137,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_four_player(self.fourPlayer, serializer);
     sse_encode_bool(self.zapper, serializer);
     sse_encode_list_String(self.genieCodes, serializer);
-    sse_encode_u_32(self.fps, serializer);
   }
 
   @protected
@@ -1112,12 +1168,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   void sse_encode_ram_state(RamState self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
-  }
-
-  @protected
-  void sse_encode_u_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint32(self);
   }
 
   @protected

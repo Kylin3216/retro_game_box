@@ -1,9 +1,10 @@
 use alloc::string::{String, ToString};
+use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::ControlFlow;
 use crate::{
     apu::{Apu, Channel},
-    bus::CpuBus,
+    bus::Bus,
     cart::Cart,
     common::{Clock, ResetKind, NesRegion, Regional, Reset},
     cpu::Cpu,
@@ -13,15 +14,14 @@ use crate::{
     ppu::Ppu,
     video::{Video, VideoFilter},
 };
-use anyhow::{anyhow,Result};
+use anyhow::{anyhow, Result};
+use crate::genie::GenieCode;
 
 /// Represents an NES Control Deck
 #[derive(Debug, Clone)]
 #[must_use]
 pub struct ControlDeck {
     running: bool,
-    ram_state: RamState,
-    region: NesRegion,
     video: Video,
     loaded_rom: Option<String>,
     cycles_remaining: f32,
@@ -30,19 +30,51 @@ pub struct ControlDeck {
 
 impl Default for ControlDeck {
     fn default() -> Self {
-        Self::new(RamState::default())
+        Self::new()
+    }
+}
+
+pub struct Config {
+    pub filter: VideoFilter,
+    pub region: NesRegion,
+    pub ram_state: RamState,
+    pub four_player: FourPlayer,
+    pub zapper: bool,
+    pub genie_codes: Vec<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            filter:
+            VideoFilter::default(),
+            region: NesRegion::default(),
+            ram_state: RamState::AllZeros,
+            four_player: FourPlayer::default(),
+            zapper: false,
+            genie_codes: vec![],
+        }
     }
 }
 
 impl ControlDeck {
     /// Create a NES `ControlDeck`.
-    pub fn new(ram_state: RamState) -> Self {
-        let cpu = Cpu::new(CpuBus::new(ram_state));
+    pub fn new() -> Self {
+        Self::with_config(Config::default())
+    }
+    pub fn with_config(config: Config) -> Self {
+        let mut cpu = Cpu::new(Bus::new(config.ram_state));
+        cpu.set_region(config.region);
+        cpu.set_four_player(config.four_player);
+        cpu.connect_zapper(config.zapper);
+        for genie_code in config.genie_codes.iter().cloned() {
+            let _ = cpu.add_genie_code(genie_code);
+        }
+        let mut video = Video::default();
+        video.set_filter(config.filter);
         Self {
             running: false,
-            ram_state,
-            region: NesRegion::default(),
-            video: Video::default(),
+            video,
             loaded_rom: None,
             cycles_remaining: 0.0,
             cpu,
@@ -56,7 +88,7 @@ impl ControlDeck {
     /// If there is any issue loading the ROM, then an error is returned.
     pub fn load_rom(&mut self, name: String, rom: Vec<u8>) -> Result<()> {
         self.loaded_rom = Some(name.clone());
-        let cart = Cart::from_rom(name, rom, self.ram_state)?;
+        let cart = Cart::from_rom(name, rom, self.cpu.ram_state())?;
         self.set_region(cart.region());
         self.cpu.load_cart(cart);
         self.reset(ResetKind::Hard);
@@ -389,13 +421,13 @@ impl Regional for ControlDeck {
     /// Get the NES format for the emulation.
     #[inline]
     fn region(&self) -> NesRegion {
-        self.region
+        self.cpu.region()
     }
 
     /// Set the NES format for the emulation.
     #[inline]
     fn set_region(&mut self, region: NesRegion) {
-        self.region = region;
+        self.cpu.set_region(region);
         self.cpu.set_region(region);
     }
 }

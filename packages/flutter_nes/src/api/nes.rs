@@ -1,13 +1,14 @@
-use anyhow::anyhow;
-use flutter_rust_bridge::{DartFnFuture, frb};
+use std::thread;
+use crossbeam_channel::{bounded, Receiver, Sender};
+use flutter_rust_bridge::{DartFnFuture, frb, spawn};
 use nes_core::common::NesRegion;
-use nes_core::control_deck::{ControlDeck};
-use nes_core::genie::GenieCode;
+use nes_core::control_deck::{Config, ControlDeck};
 use nes_core::input::{FourPlayer, JoypadBtnState, Player};
 use nes_core::mem::RamState;
 use nes_core::video::VideoFilter;
 use crate::api::texture::NesTexture;
 use crate::fps::Fps;
+use crate::frb_generated::StreamSink;
 
 impl Into<JoypadBtnState> for NesButton {
     fn into(self) -> JoypadBtnState {
@@ -46,7 +47,6 @@ pub struct NesConfig {
     pub four_player: FourPlayer,
     pub zapper: bool,
     pub genie_codes: Vec<String>,
-    pub fps: u32,
 }
 
 impl NesConfig {
@@ -58,7 +58,6 @@ impl NesConfig {
         four_player: FourPlayer,
         zapper: bool,
         genie_codes: Vec<String>,
-        fps: u32,
     ) -> NesConfig {
         NesConfig {
             filter,
@@ -67,50 +66,47 @@ impl NesConfig {
             four_player,
             zapper,
             genie_codes,
-            fps,
         }
     }
 }
 
-// impl Into<Config> for NesConfig {
-//     fn into(self) -> Config {
-//         let mut codes = Vec::new();
-//         for genie_code in self.genie_codes {
-//             if let Ok(code) = GenieCode::new(genie_code) {
-//                 codes.push(code)
-//             }
-//         }
-//         Config {
-//             filter: self.filter,
-//             region: self.region,
-//             ram_state: self.ram_state,
-//             four_player: self.four_player,
-//             zapper: self.zapper,
-//             genie_codes: codes,
-//         }
-//     }
-// }
+impl Into<Config> for NesConfig {
+    fn into(self) -> Config {
+        Config {
+            filter: self.filter,
+            region: self.region,
+            ram_state: self.ram_state,
+            four_player: self.four_player,
+            zapper: self.zapper,
+            genie_codes: self.genie_codes,
+        }
+    }
+}
 
 #[frb(opaque)]
 pub struct NesEmulator {
     control: ControlDeck,
-    fps: Fps,
+    tx: Sender<()>,
+    rx: Receiver<()>,
 }
 
 impl NesEmulator {
     #[frb(sync)]
     pub fn create() -> NesEmulator {
+        let (tx, rx) = bounded(1);
         NesEmulator {
-            control: ControlDeck::new(RamState::AllZeros),
-            fps: Fps::new(120),
+            control: ControlDeck::new(),
+            tx,
+            rx,
         }
     }
     #[frb(sync)]
     pub fn with_config(config: NesConfig) -> NesEmulator {
-        let fps = config.fps;
+        let (tx, rx) = bounded(1);
         NesEmulator {
-            control: ControlDeck::new(RamState::AllZeros),
-            fps: Fps::new(fps),
+            control: ControlDeck::with_config(config.into()),
+            tx,
+            rx,
         }
     }
 
@@ -119,25 +115,69 @@ impl NesEmulator {
         Ok(())
     }
 
-    pub async fn run_loop(&mut self, on_data: impl Fn(Vec<u8>) -> DartFnFuture<()>) -> anyhow::Result<()> {
+    fn run_loop(&self, render: impl NesRender) -> anyhow::Result<()> {
+        let mut control = self.control.clone();
+        let rx = self.rx.clone();
+        let mut fps = Fps::new(60.0);
         loop {
-            self.control.clock_frame()?;
-            let data = self.control.frame_buffer();
-            on_data(data.to_vec()).await;
-            self.fps.tick();
+            if rx.try_recv().ok().is_some() {
+                break;
+            }
+            control.clock_frame()?;
+            let data = control.frame_buffer();
+            render.render(data.to_vec());
+            fps.tick();
         }
+        Ok(())
     }
-    pub fn run_loop_for_texture(&mut self, texture: NesTexture) -> anyhow::Result<()> {
+    pub async fn run_loop_for_callback(&self, callback: impl Fn(Vec<u8>) -> DartFnFuture<()>) -> anyhow::Result<()> {
+        let mut control = self.control.clone();
+        let rx = self.rx.clone();
+        let mut fps = Fps::new(60.0);
         loop {
-            self.control.clock_frame()?;
-            let data = self.control.frame_buffer();
-            texture.render(data.to_vec())?;
-            self.fps.tick();
+            if rx.try_recv().ok().is_some() {
+                break;
+            }
+            control.clock_frame()?;
+            let data = control.frame_buffer();
+            callback(data.to_vec()).await;
+            fps.tick();
         }
+        Ok(())
+    }
+    pub fn run_loop_for_painter(&self, sink: StreamSink<Vec<u8>>) -> anyhow::Result<()> {
+        self.run_loop(sink)?;
+        Ok(())
+    }
+    pub fn run_loop_for_texture(&self, texture: NesTexture) -> anyhow::Result<()> {
+        self.run_loop(texture)?;
+        Ok(())
     }
 
     pub fn handle_button(&mut self, player: Player, button: NesButton, pressed: bool) {
         let joypad = &mut self.control.joypad_mut(player.into());
         joypad.set_button(button.into(), pressed);
+    }
+
+    #[frb(sync)]
+    pub fn stop_loop(&self) {
+        let tx = self.tx.clone();
+        let _ = tx.send(());
+    }
+}
+
+trait NesRender: Send + 'static {
+    fn render(&self, data: Vec<u8>);
+}
+
+impl NesRender for StreamSink<Vec<u8>> {
+    fn render(&self, data: Vec<u8>) {
+        let _ = self.add(data);
+    }
+}
+
+impl NesRender for NesTexture {
+    fn render(&self, data: Vec<u8>) {
+        let _ = self.render(data);
     }
 }

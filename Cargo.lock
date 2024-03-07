@@ -824,7 +824,6 @@ dependencies = [
  "enum_dispatch",
  "image",
  "lazy_static",
- "libm",
  "log",
  "num-traits",
  "rand",
