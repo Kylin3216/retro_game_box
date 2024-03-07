@@ -14,18 +14,21 @@ pub enum Access {
 }
 
 pub trait Mem {
+    #[inline]
     fn read(&mut self, addr: u16, access: Access) -> u8 {
         self.peek(addr, access)
     }
 
     fn peek(&self, addr: u16, access: Access) -> u8;
 
+    #[inline]
     fn read_u16(&mut self, addr: u16, access: Access) -> u16 {
         let lo = self.read(addr, access);
         let hi = self.read(addr.wrapping_add(1), access);
         u16::from_le_bytes([lo, hi])
     }
 
+    #[inline]
     fn peek_u16(&self, addr: u16, access: Access) -> u16 {
         let lo = self.peek(addr, access);
         let hi = self.peek(addr.wrapping_add(1), access);
@@ -34,6 +37,7 @@ pub trait Mem {
 
     fn write(&mut self, addr: u16, val: u8, access: Access);
 
+    #[inline]
     fn write_u16(&mut self, addr: u16, val: u16, access: Access) {
         let [lo, hi] = val.to_le_bytes();
         self.write(addr, lo, access);
@@ -67,7 +71,7 @@ impl RamState {
             RamState::AllZeros => ram.fill(0x00),
             RamState::AllOnes => ram.fill(0xFF),
             RamState::Random => {
-                let mut rng = rand::rngs::SmallRng::seed_from_u64(8);
+                let mut rng = rand::rngs::SmallRng::seed_from_u64(256);
                 for val in ram {
                     *val = rng.gen_range(0x00..=0xFF);
                 }
@@ -141,75 +145,76 @@ impl MemBanks {
         }
     }
 
+    #[inline]
     pub fn set(&mut self, slot: usize, bank: usize) {
-        assert!(slot < self.banks.len());
         self.banks[slot] = (bank & self.mask) << self.shift;
         debug_assert!(self.banks[slot] < self.page_count * self.window);
     }
 
+    #[inline]
     pub fn set_range(&mut self, start: usize, end: usize, bank: usize) {
         let mut new_addr = (bank & self.mask) << self.shift;
         for slot in start..=end {
-            assert!(slot < self.banks.len());
             self.banks[slot] = new_addr;
             debug_assert!(self.banks[slot] < self.page_count * self.window);
             new_addr += self.window;
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn last(&self) -> usize {
         self.page_count.saturating_sub(1)
     }
 
+    #[inline]
     #[must_use]
-    pub const fn get(&self, addr: u16) -> usize {
-        // $6005    - 0b0110000000000101 -> bank 0
-        //  ($2000)   0b0010000000000000
+    pub const fn get_bank(&self, addr: u16) -> usize {
+        // 0x6005    - 0b0110000000000101 -> bank 0
+        //  (0x2000)   0b0010000000000000
         //
-        // $8005    - 0b1000000000000101 -> bank 0
-        //   ($4000)  0b0100000000000000
-        // $C005    - 0b1100000000000101 -> bank 1
+        // 0x8005    - 0b1000000000000101 -> bank 0
+        //   (0x4000)  0b0100000000000000
+        // 0xC005    - 0b1100000000000101 -> bank 1
         //
-        // $8005    - 0b1000000000000101 -> bank 0
-        // $A005    - 0b1010000000000101 -> bank 1
-        // $C005    - 0b1100000000000101 -> bank 2
-        // $E005    - 0b1110000000000101 -> bank 3
-        //   ($2000)  0b0010000000000000
+        // 0x8005    - 0b1000000000000101 -> bank 0
+        // 0xA005    - 0b1010000000000101 -> bank 1
+        // 0xC005    - 0b1100000000000101 -> bank 2
+        // 0xE005    - 0b1110000000000101 -> bank 3
+        //   (0x2000)  0b0010000000000000
         ((addr as usize) & self.size) >> self.shift
     }
 
+    #[inline]
     #[must_use]
     pub fn translate(&self, addr: u16) -> usize {
-        // $6005    - 0b0110000000000101 -> bank 0
-        //  ($2000)   0b0010000000000000
+        // 0x6005    - 0b0110000000000101 -> bank 0
+        //  (0x2000)   0b0010000000000000
         //
-        // $8005    - 0b1000000000000101 -> bank 0
-        //   ($4000)  0b0100000000000000
-        // $C005    - 0b1100000000000101 -> bank 1
+        // 0x8005    - 0b1000000000000101 -> bank 0
+        //   (0x4000)  0b0100000000000000
+        // 0xC005    - 0b1100000000000101 -> bank 1
         //
-        // $8005    - 0b1000000000000101 -> bank 0
-        //  0 -> $0000
+        // 0x8005    - 0b1000000000000101 -> bank 0
+        //  0 -> 0x0000
         //  1
         //  2
-        // $A005    - 0b1010000000000101 -> bank 1
-        // $C005    - 0b1100000000000101 -> bank 2
-        // $E005    - 0b1110000000000101 -> bank 3
-        //   ($2000)  0b0010000000000000
-        let slot = self.get(addr);
-        assert!(slot < self.banks.len());
-        let page = self.banks[slot];
+        // 0xA005    - 0b1010000000000101 -> bank 1
+        // 0xC005    - 0b1100000000000101 -> bank 2
+        // 0xE005    - 0b1110000000000101 -> bank 3
+        //   (0x2000)  0b0010000000000000
+        let page = self.banks[self.get_bank(addr)];
         page | (addr as usize) & (self.window - 1)
     }
 }
 
 impl core::fmt::Debug for MemBanks {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::result::Result<(), core::fmt::Error> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
         f.debug_struct("Bank")
-            .field("start", &format_args!("${:04X}", self.start))
-            .field("end", &format_args!("${:04X}", self.end))
-            .field("size", &format_args!("${:04X}", self.size))
-            .field("window", &format_args!("${:04X}", self.window))
+            .field("start", &format_args!("0x{:04X}", self.start))
+            .field("end", &format_args!("0x{:04X}", self.end))
+            .field("size", &format_args!("0x{:04X}", self.size))
+            .field("window", &format_args!("0x{:04X}", self.window))
             .field("shift", &self.shift)
             .field("mask", &self.shift)
             .field("banks", &self.banks)
@@ -226,14 +231,14 @@ mod tests {
     fn get_bank() {
         let size = 128 * 1024;
         let banks = MemBanks::new(0x8000, 0xFFFF, size, 0x4000);
-        assert_eq!(banks.get(0x8000), 0);
-        assert_eq!(banks.get(0x9FFF), 0);
-        assert_eq!(banks.get(0xA000), 0);
-        assert_eq!(banks.get(0xBFFF), 0);
-        assert_eq!(banks.get(0xC000), 1);
-        assert_eq!(banks.get(0xDFFF), 1);
-        assert_eq!(banks.get(0xE000), 1);
-        assert_eq!(banks.get(0xFFFF), 1);
+        assert_eq!(banks.get_bank(0x8000), 0);
+        assert_eq!(banks.get_bank(0x9FFF), 0);
+        assert_eq!(banks.get_bank(0xA000), 0);
+        assert_eq!(banks.get_bank(0xBFFF), 0);
+        assert_eq!(banks.get_bank(0xC000), 1);
+        assert_eq!(banks.get_bank(0xDFFF), 1);
+        assert_eq!(banks.get_bank(0xE000), 1);
+        assert_eq!(banks.get_bank(0xFFFF), 1);
     }
 
     #[test]

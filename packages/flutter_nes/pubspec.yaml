@@ -8,9 +8,11 @@ environment:
   flutter: '>=3.3.0'
 
 dependencies:
+  dio: ^5.4.1
   flutter:
     sdk: flutter
-  flutter_rust_bridge: 2.0.0-dev.25
+  flutter_rust_bridge: 2.0.0-dev.26
+  irondash_engine_context: ^0.5.2
   plugin_platform_interface: ^2.0.2
 
 dev_dependencies:

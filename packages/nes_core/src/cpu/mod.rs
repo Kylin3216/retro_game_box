@@ -2,14 +2,20 @@
 //!
 //! <http://wiki.nesdev.com/w/index.php/CPU>
 
-use alloc::string::String;
-use core::fmt;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use crate::{
-    bus::Bus,
-    common::{Clock, NesRegion, Regional, Reset, ResetKind},
+    apu::{Apu, Channel},
+    bus::CpuBus,
+    cart::Cart,
+    common::{Clock, ResetKind, NesRegion, Regional, Reset},
+    input::{FourPlayer, Joypad, Player, Zapper},
+    mapper::Mapper,
     mem::{Access, Mem},
+    ppu::Ppu,
 };
-use bitflags::{bitflags};
+use bitflags::{bitflags, Flags};
 use instr::{
     AddrMode::{ABS, ABX, ABY, ACC, IDX, IDY, IMM, IMP, IND, REL, ZP0, ZPX, ZPY},
     Instr,
@@ -22,7 +28,8 @@ use instr::{
     },
 };
 use serde::{Deserialize, Serialize};
-use core::fmt::Write;
+use core::fmt::{self, Write};
+use anyhow::Result;
 
 pub mod instr;
 
@@ -65,63 +72,65 @@ bitflags! {
 }
 
 /// Every cycle is either a read or a write.
-#[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
-pub struct Cycle {
-    start: u64,
-    end: u64,
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+enum Cycle {
+    Read,
+    Write,
 }
 
 /// The Central Processing Unit status and registers
 #[derive(Clone, Serialize, Deserialize)]
 #[must_use]
 pub struct Cpu {
-    pub cycle: usize,
+    cycle: usize,
     // total number of cycles ran
-    pub region: NesRegion,
-    pub master_clock: u64,
-    // start/end cycle counts for reads
-    pub read_cycles: Cycle,
-    // start/end cycle counts for writes
-    pub write_cycles: Cycle,
-    pub pc: u16,
+    region: NesRegion,
+    master_clock: u64,
+    clock_divider: u64,
+    start_clocks: u64,
+    end_clocks: u64,
+    pc: u16,
     // program counter
-    pub sp: u8,
+    sp: u8,
     // stack pointer - stack is at $0100-$01FF
-    pub acc: u8,
+    acc: u8,
     // accumulator
-    pub x: u8,
+    x: u8,
     // x register
-    pub y: u8,
+    y: u8,
     // y register
-    pub status: Status,
+    status: Status,
     // Status Registers
-    pub bus: Bus,
-    pub instr: Instr,
+    bus: CpuBus,
+    instr: Instr,
     // The currently executing instruction
-    pub abs_addr: u16,
+    abs_addr: u16,
     // Used memory addresses get set here
-    pub rel_addr: u16,
+    rel_addr: u16,
     // Relative address for branch instructions
-    pub fetched_data: u8,
+    fetched_data: u8,
     // Represents data fetched for the ALU
-    pub irq: Irq,
+    irq: Irq,
     // Pending interrupts
-    pub run_irq: bool,
-    pub prev_run_irq: bool,
-    pub nmi: bool,
-    pub prev_nmi: bool,
-    pub prev_nmi_pending: bool,
+    run_irq: bool,
+    prev_run_irq: bool,
+    nmi: bool,
+    prev_nmi: bool,
+    prev_nmi_pending: bool,
     #[serde(skip)]
-    pub corrupted: bool,
+    corrupted: bool,
     // Encountering an invalid opcode corrupts CPU processing
-    pub dmc_dma: bool,
-    pub dma_halt: bool,
-    pub dummy_read: bool,
-    #[serde(skip)]
-    pub disasm: String,
+    dmc_dma: bool,
+    halt: bool,
+    dummy_read: bool,
+    cycle_accurate: bool,
+    disasm: String,
 }
 
 impl Cpu {
+    // TODO 1789772.667 MHz (~559 ns/cycle) - May want to use 1786830 for a stable 60 FPS
+    // Add Emulator setting like Mesen??
+    // http://forums.nesdev.com/viewtopic.php?p=223679#p223679
     const NTSC_MASTER_CLOCK_RATE: f32 = 21_477_272.0;
     const NTSC_CPU_CLOCK_RATE: f32 = Self::NTSC_MASTER_CLOCK_RATE / 12.0;
     const PAL_MASTER_CLOCK_RATE: f32 = 26_601_712.0;
@@ -141,13 +150,14 @@ impl Cpu {
     const POWER_ON_SP: u8 = 0xFD;
     const SP_BASE: u16 = 0x0100; // Stack-pointer starting address
 
-    pub fn new(bus: Bus) -> Self {
+    pub fn new(bus: CpuBus) -> Self {
         let mut cpu = Self {
             cycle: 0,
             region: NesRegion::default(),
             master_clock: 0,
-            read_cycles: Cycle::default(),
-            write_cycles: Cycle::default(),
+            clock_divider: 0,
+            start_clocks: 0,
+            end_clocks: 0,
             pc: 0x0000,
             sp: 0x00,
             acc: 0x00,
@@ -167,14 +177,16 @@ impl Cpu {
             prev_nmi_pending: false,
             corrupted: false,
             dmc_dma: false,
-            dma_halt: false,
+            halt: false,
             dummy_read: false,
+            cycle_accurate: true,
             disasm: String::with_capacity(100),
         };
         cpu.set_region(cpu.region);
         cpu
     }
 
+    #[inline]
     #[must_use]
     pub const fn region_clock_rate(region: NesRegion) -> f32 {
         match region {
@@ -184,9 +196,222 @@ impl Cpu {
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn clock_rate(&self) -> f32 {
         Self::region_clock_rate(self.region)
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn cycle(&self) -> usize {
+        self.cycle
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn pc(&self) -> u16 {
+        self.pc
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn sp(&self) -> u8 {
+        self.sp
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn a(&self) -> u8 {
+        self.acc
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn x(&self) -> u8 {
+        self.x
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn y(&self) -> u8 {
+        self.y
+    }
+
+    #[inline]
+    pub const fn status(&self) -> Status {
+        self.status
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn corrupted(&self) -> bool {
+        self.corrupted
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn disasm(&self) -> &str {
+        &self.disasm
+    }
+
+    #[inline]
+    pub const fn ppu(&self) -> &Ppu {
+        self.bus.ppu()
+    }
+
+    #[inline]
+    pub fn ppu_mut(&mut self) -> &mut Ppu {
+        self.bus.ppu_mut()
+    }
+
+    #[inline]
+    pub const fn apu(&self) -> &Apu {
+        self.bus.apu()
+    }
+
+    #[inline]
+    pub fn apu_mut(&mut self) -> &mut Apu {
+        self.bus.apu_mut()
+    }
+
+    #[inline]
+    pub const fn mapper(&self) -> &Mapper {
+        self.bus.mapper()
+    }
+
+    #[inline]
+    pub fn mapper_mut(&mut self) -> &mut Mapper {
+        self.bus.mapper_mut()
+    }
+
+    #[inline]
+    pub const fn joypad(&self, slot: Player) -> &Joypad {
+        self.bus.joypad(slot)
+    }
+
+    #[inline]
+    pub fn joypad_mut(&mut self, slot: Player) -> &mut Joypad {
+        self.bus.joypad_mut(slot)
+    }
+
+    #[inline]
+    pub fn connect_zapper(&mut self, enabled: bool) {
+        self.bus.connect_zapper(enabled);
+    }
+
+    #[inline]
+    pub const fn zapper(&self) -> &Zapper {
+        self.bus.zapper()
+    }
+
+    #[inline]
+    pub fn zapper_mut(&mut self) -> &mut Zapper {
+        self.bus.zapper_mut()
+    }
+
+    #[inline]
+    pub fn load_cart(&mut self, cart: Cart) {
+        self.bus.load_cart(cart);
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn cart_battery_backed(&self) -> bool {
+        self.bus.cart_battery_backed()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn sram(&self) -> &[u8] {
+        self.bus.sram()
+    }
+
+    #[inline]
+    pub fn load_sram(&mut self, sram: Vec<u8>) {
+        self.bus.load_sram(sram);
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn wram(&self) -> &[u8] {
+        self.bus.wram()
+    }
+
+    /// Add a Game Genie code to override memory reads/writes.
+    ///
+    /// # Errors
+    ///
+    /// Errors if genie code is invalid.
+    #[inline]
+    pub fn add_genie_code(&mut self, genie_code: String) -> Result<()> {
+        self.bus.add_genie_code(genie_code)
+    }
+
+    #[inline]
+    pub fn remove_genie_code(&mut self, genie_code: &str) {
+        self.bus.remove_genie_code(genie_code);
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn ppu_cycle(&self) -> u32 {
+        self.bus.ppu_cycle()
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn ppu_scanline(&self) -> u32 {
+        self.bus.ppu_scanline()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn frame_buffer(&self) -> &[u16] {
+        self.bus.frame_buffer()
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn frame_number(&self) -> u32 {
+        self.bus.frame_number()
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn audio_channel_enabled(&self, channel: Channel) -> bool {
+        self.bus.audio_channel_enabled(channel)
+    }
+
+    #[inline]
+    pub fn toggle_audio_channel(&mut self, channel: Channel) {
+        self.bus.toggle_audio_channel(channel);
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn audio_samples(&self) -> &[f32] {
+        self.bus.audio_samples()
+    }
+
+    #[inline]
+    pub fn clear_audio_samples(&mut self) {
+        self.bus.clear_audio_samples();
+    }
+
+    #[inline]
+    pub const fn four_player(&self) -> FourPlayer {
+        self.bus.four_player()
+    }
+
+    #[inline]
+    pub fn set_four_player(&mut self, four_player: FourPlayer) {
+        self.bus.set_four_player(four_player);
+    }
+
+    #[inline]
+    pub fn set_cycle_accurate(&mut self, enabled: bool) {
+        self.cycle_accurate = enabled;
     }
 
     // <http://wiki.nesdev.com/w/index.php/IRQ>
@@ -217,23 +442,13 @@ impl Cpu {
             self.status.set(Status::I, true);
 
             self.pc = self.read_u16(Self::NMI_VECTOR);
-            log::trace!(
-                "NMI - PPU:{:3},{:3} CYC:{}",
-                self.bus.ppu.cycle(),
-                self.bus.ppu.scanline(),
-                self.cycle
-            );
+            log::trace!("NMI: {}", self.cycle);
         } else {
             self.push(status);
             self.status.set(Status::I, true);
 
             self.pc = self.read_u16(Self::IRQ_VECTOR);
-            log::trace!(
-                "IRQ - PPU:{:3},{:3} CYC:{}",
-                self.bus.ppu.cycle(),
-                self.bus.ppu.scanline(),
-                self.cycle
-            );
+            log::trace!("IRQ: {}", self.cycle);
         }
     }
 
@@ -249,51 +464,73 @@ impl Cpu {
         // during the second half of each cycle, hence here in `end_cycle`) and raises an internal
         // signal if the input goes from being high during one cycle to being low during the
         // next.
-        let nmi_pending = self.bus.ppu.nmi_pending();
-        self.nmi |= !self.prev_nmi_pending && nmi_pending;
+        let nmi_pending = self.bus.nmi_pending();
+        if !self.prev_nmi_pending && nmi_pending {
+            self.nmi = true;
+            log::trace!("NMI Edge Detected: {}", self.cycle);
+        }
         self.prev_nmi_pending = nmi_pending;
+
+        self.irq = self.bus.irqs_pending();
 
         // The IRQ status at the end of the second-to-last cycle is what matters,
         // so keep the second-to-last status.
         self.prev_run_irq = self.run_irq;
-        self.irq = self.bus.irqs_pending();
         self.run_irq = !self.irq.is_empty() && !self.status.intersects(Status::I);
+        if self.run_irq {
+            log::trace!("IRQ Level Detected: {}: {:?}", self.cycle, self.irq);
+        }
 
-        let dmc_dma = self.bus.apu.dmc_dma();
-        self.dmc_dma |= dmc_dma;
-        self.dma_halt |= dmc_dma;
-        self.dummy_read |= dmc_dma;
+        if self.bus.dmc_dma() {
+            self.dmc_dma = true;
+            self.halt = true;
+            self.dummy_read = true;
+        }
     }
 
-    fn start_cycle(&mut self, increment: u64) {
-        self.master_clock += increment;
+    fn start_cycle(&mut self, cycle: Cycle) {
+        self.master_clock += if cycle == Cycle::Read {
+            self.start_clocks - 1
+        } else {
+            self.start_clocks + 1
+        };
         self.cycle = self.cycle.wrapping_add(1);
-        self.bus.clock_to(self.master_clock - Self::PPU_OFFSET);
-        self.bus.clock();
+
+        if self.cycle_accurate {
+            self.bus.clock_to(self.master_clock - Self::PPU_OFFSET);
+            self.bus.clock();
+        }
     }
 
-    fn end_cycle(&mut self, increment: u64) {
-        self.master_clock += increment;
-        self.bus.clock_to(self.master_clock - Self::PPU_OFFSET);
+    fn end_cycle(&mut self, cycle: Cycle) {
+        self.master_clock += if cycle == Cycle::Read {
+            self.end_clocks + 1
+        } else {
+            self.end_clocks - 1
+        };
+
+        if self.cycle_accurate {
+            self.bus.clock_to(self.master_clock - Self::PPU_OFFSET);
+        }
 
         self.handle_interrupts();
     }
 
     fn process_dma_cycle(&mut self) {
         // OAM DMA cycles count as halt/dummy reads for DMC DMA when both run at the same time
-        if self.dma_halt {
-            self.dma_halt = false;
+        if self.halt {
+            self.halt = false;
         } else if self.dummy_read {
             self.dummy_read = false;
         }
-        self.start_cycle(self.read_cycles.start);
+        self.start_cycle(Cycle::Read);
     }
 
     fn handle_dma(&mut self, addr: u16) {
-        self.start_cycle(self.read_cycles.start);
+        self.start_cycle(Cycle::Read);
         self.bus.read(addr, Access::Dummy);
-        self.end_cycle(self.read_cycles.end);
-        self.dma_halt = false;
+        self.end_cycle(Cycle::Read);
+        self.halt = false;
 
         let skip_dummy_reads = addr == 0x4016 || addr == 0x4017;
 
@@ -304,35 +541,35 @@ impl Cpu {
 
         while self.bus.oam_dma() || self.dmc_dma {
             if self.cycle & 0x01 == 0x00 {
-                if self.dmc_dma && !self.dma_halt && !self.dummy_read {
+                if self.dmc_dma && !self.halt && !self.dummy_read {
                     // DMC DMA ready to read a byte (halt and dummy read done before)
                     self.process_dma_cycle();
-                    read_val = self.bus.read(self.bus.apu.dmc_dma_addr(), Access::Dummy);
-                    self.end_cycle(self.read_cycles.end);
-                    self.bus.apu.load_dmc_buffer(read_val);
+                    read_val = self.bus.read(self.bus.dmc_dma_addr(), Access::Dummy);
+                    self.end_cycle(Cycle::Read);
+                    self.bus.load_dmc_buffer(read_val);
                     self.dmc_dma = false;
                 } else if self.bus.oam_dma() {
                     // DMC DMA not running or ready, run OAM DMA
                     self.process_dma_cycle();
                     read_val = self.bus.read(oam_base_addr + oam_offset, Access::Dummy);
-                    self.end_cycle(self.read_cycles.end);
+                    self.end_cycle(Cycle::Read);
                     oam_offset += 1;
                     oam_dma_count += 1;
                 } else {
                     // DMC DMA running, but not ready yet (needs to halt, or dummy read) and OAM
                     // DMA isn't running
-                    debug_assert!(self.dma_halt || self.dummy_read);
+                    debug_assert!(self.halt || self.dummy_read);
                     self.process_dma_cycle();
                     if !skip_dummy_reads {
                         self.bus.read(addr, Access::Dummy); // throw away
                     }
-                    self.end_cycle(self.read_cycles.end);
+                    self.end_cycle(Cycle::Read);
                 }
             } else if self.bus.oam_dma() && oam_dma_count & 0x01 == 0x01 {
                 // OAM DMA write cycle, done on odd cycles after a read on even cycles
                 self.process_dma_cycle();
                 self.bus.write(0x2004, read_val, Access::Dummy);
-                self.end_cycle(self.read_cycles.end);
+                self.end_cycle(Cycle::Read);
                 oam_dma_count += 1;
                 if oam_dma_count == 0x200 {
                     self.bus.oam_dma_finish();
@@ -343,7 +580,7 @@ impl Cpu {
                 if !skip_dummy_reads {
                     self.bus.read(addr, Access::Dummy); // throw away
                 }
-                self.end_cycle(self.read_cycles.end);
+                self.end_cycle(Cycle::Read);
             }
         }
     }
@@ -351,12 +588,13 @@ impl Cpu {
     // Status Register functions
 
     // Convenience method to set both Z and N
-
+    #[inline]
     fn set_zn_status(&mut self, val: u8) {
         self.status.set(Status::Z, val == 0x00);
         self.status.set(Status::N, val & 0x80 == 0x80);
     }
 
+    #[inline]
     const fn status_bit(&self, reg: Status) -> u8 {
         self.status.intersection(reg).bits()
     }
@@ -364,7 +602,7 @@ impl Cpu {
     // Stack Functions
 
     // Push a byte to the stack
-
+    #[inline]
     fn push(&mut self, val: u8) {
         self.write(Self::SP_BASE | u16::from(self.sp), val, Access::Write);
         self.sp = self.sp.wrapping_sub(1);
@@ -372,6 +610,7 @@ impl Cpu {
 
     // Pull a byte from the stack
     #[must_use]
+    #[inline]
     fn pop(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         self.read(Self::SP_BASE | u16::from(self.sp), Access::Read)
@@ -379,6 +618,7 @@ impl Cpu {
 
     // Peek byte at the top of the stack
     #[must_use]
+    #[inline]
     pub fn peek_stack(&self) -> u8 {
         self.peek(
             Self::SP_BASE | u16::from(self.sp.wrapping_add(1)),
@@ -388,6 +628,7 @@ impl Cpu {
 
     // Peek at the top of the stack
     #[must_use]
+    #[inline]
     pub fn peek_stack_u16(&self) -> u16 {
         let lo = self.peek(Self::SP_BASE | u16::from(self.sp), Access::Dummy);
         let hi = self.peek(
@@ -398,7 +639,7 @@ impl Cpu {
     }
 
     // Push a word (two bytes) to the stack
-
+    #[inline]
     fn push_u16(&mut self, val: u16) {
         let [lo, hi] = val.to_le_bytes();
         self.push(hi);
@@ -406,7 +647,7 @@ impl Cpu {
     }
 
     // Pull a word (two bytes) from the stack
-
+    #[inline]
     fn pop_u16(&mut self) -> u16 {
         let lo = self.pop();
         let hi = self.pop();
@@ -419,43 +660,39 @@ impl Cpu {
     // is implied by the instruction such as INX which increments the X register.
     fn fetch_data(&mut self) {
         let mode = self.instr.addr_mode();
-        let acc = self.acc;
-        let abs_addr = self.abs_addr;
-        self.fetched_data = if matches!(mode, IMP | ACC) {
-            acc
-        } else {
-            self.read(abs_addr, Access::Read) // Cycle 2/4/5 read
-        };
-    }
-
-    // Read instructions may have crossed a page boundary and need to be re-read
-    fn fetch_data_cross(&mut self) {
-        let mode = self.instr.addr_mode();
-        let x = self.x;
-        let y = self.y;
-        let abs_addr = self.abs_addr;
-        if matches!(mode, ABX | ABY | IDY) {
-            let reg = match mode {
-                ABX => x,
-                ABY | IDY => y,
-                _ => unreachable!("not possible"),
-            };
-            // Read if we crossed, otherwise use what was already set in cycle 4 from
-            // addressing mode
-            //
-            // ABX/ABY/IDY all add `reg` to `abs_addr`, so this checks if it wrapped
-            // around to 0.
-            if (abs_addr & 0x00FF) < u16::from(reg) {
-                self.fetched_data = self.read(abs_addr, Access::Read);
+        self.fetched_data = match mode {
+            IMP | ACC => self.acc,
+            ABX | ABY | IDY => {
+                // Read instructions may have crossed a page boundary and need to be re-read
+                match self.instr.op() {
+                    LDA | LDX | LDY | EOR | AND | ORA | ADC | SBC | CMP | BIT | LAX | NOP | IGN
+                    | LAS => {
+                        let reg = match mode {
+                            ABX => self.x,
+                            ABY | IDY => self.y,
+                            _ => unreachable!("not possible"),
+                        };
+                        // Read if we crossed, otherwise use what was already set in cycle 4 from
+                        // addressing mode
+                        //
+                        // ABX/ABY/IDY all add `reg` to `abs_addr`, so this checks if it wrapped
+                        // around to 0.
+                        if (self.abs_addr & 0x00FF) < u16::from(reg) {
+                            self.read(self.abs_addr, Access::Read)
+                        } else {
+                            self.fetched_data
+                        }
+                    }
+                    _ => self.read(self.abs_addr, Access::Read), // Cycle 2/4/5 read
+                }
             }
-        } else {
-            self.fetch_data();
-        }
+            _ => self.read(self.abs_addr, Access::Read), // Cycle 2/4/5 read
+        };
     }
 
     // Writes data back to where fetched_data was sourced from. Either accumulator or memory
     // specified in abs_addr.
-
+    #[inline]
     fn write_fetched(&mut self, val: u8) {
         match self.instr.addr_mode() {
             IMP | ACC => self.acc = val,
@@ -466,6 +703,7 @@ impl Cpu {
 
     // Reads an instruction byte and increments PC by 1.
     #[must_use]
+    #[inline]
     fn read_instr(&mut self) -> u8 {
         let val = self.read(self.pc, Access::Read);
         self.pc = self.pc.wrapping_add(1);
@@ -474,6 +712,7 @@ impl Cpu {
 
     // Reads an instruction 16-bit word and increments PC by 2.
     #[must_use]
+    #[inline]
     fn read_instr_u16(&mut self) -> u16 {
         let lo = self.read_instr();
         let hi = self.read_instr();
@@ -482,6 +721,7 @@ impl Cpu {
 
     // Read a 16-bit word.
     #[must_use]
+    #[inline]
     pub fn read_u16(&mut self, addr: u16) -> u16 {
         let lo = self.read(addr, Access::Read);
         let hi = self.read(addr.wrapping_add(1), Access::Read);
@@ -490,6 +730,7 @@ impl Cpu {
 
     // Peek a 16-bit word without side effects.
     #[must_use]
+    #[inline]
     pub fn peek_u16(&self, addr: u16) -> u16 {
         let lo = self.peek(addr, Access::Dummy);
         let hi = self.peek(addr.wrapping_add(1), Access::Dummy);
@@ -498,6 +739,7 @@ impl Cpu {
 
     // Like read_word, but for Zero Page which means it'll wrap around at 0xFF
     #[must_use]
+    #[inline]
     fn read_zp_u16(&mut self, addr: u8) -> u16 {
         let lo = self.read(addr.into(), Access::Read);
         let hi = self.read(addr.wrapping_add(1).into(), Access::Read);
@@ -506,94 +748,80 @@ impl Cpu {
 
     // Like peek_word, but for Zero Page which means it'll wrap around at 0xFF
     #[must_use]
+    #[inline]
     fn peek_zp_u16(&self, addr: u8) -> u16 {
         let lo = self.peek(addr.into(), Access::Dummy);
         let hi = self.peek(addr.wrapping_add(1).into(), Access::Dummy);
         u16::from_le_bytes([lo, hi])
     }
 
-    pub fn disassemble(&mut self, pc: &mut u16) -> &str {
+    pub fn disassemble(&mut self, pc: &mut u16) {
         let opcode = self.peek(*pc, Access::Dummy);
         let instr = Cpu::INSTRUCTIONS[opcode as usize];
+        let mut bytes = Vec::with_capacity(3);
         self.disasm.clear();
-
-        let _ = write!(self.disasm, "${pc:04X} ${opcode:02X} ");
+        let _ = write!(self.disasm, "{pc:04X} ");
+        bytes.push(opcode);
         let mut addr = pc.wrapping_add(1);
-
-        match instr.addr_mode() {
+        let mode = match instr.addr_mode() {
             IMM => {
-                let byte = self.peek(addr, Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
                 addr = addr.wrapping_add(1);
-                let _ = write!(self.disasm, "${byte:02X}     {instr} #${byte:02X}");
+                format!(" #${:02X}", bytes[1])
             }
             ZP0 => {
-                let byte = self.peek(addr, Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
                 addr = addr.wrapping_add(1);
-                let val = self.peek(byte.into(), Access::Dummy);
-                let _ = write!(
-                    self.disasm,
-                    "${byte:02X}     {instr} ${byte:02X} = #${val:02X}"
-                );
+                let val = self.peek(bytes[1].into(), Access::Dummy);
+                format!(" ${:02X} = #${val:02X}", bytes[1])
             }
             ZPX => {
-                let byte = self.peek(addr, Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
                 addr = addr.wrapping_add(1);
-                let x_offset = byte.wrapping_add(self.x);
+                let x_offset = bytes[1].wrapping_add(self.x);
                 let val = self.peek(x_offset.into(), Access::Dummy);
-                let _ = write!(
-                    self.disasm,
-                    "${byte:02X}     {instr} ${byte:02X},X @ ${x_offset:02X} = #${val:02X}"
-                );
+                format!(" ${:02X},X @ ${x_offset:02X} = #${val:02X}", bytes[1])
             }
             ZPY => {
-                let byte = self.peek(addr, Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
                 addr = addr.wrapping_add(1);
-                let y_offset = byte.wrapping_add(self.y);
+                let y_offset = bytes[1].wrapping_add(self.y);
                 let val = self.peek(y_offset.into(), Access::Dummy);
-                let _ = write!(
-                    self.disasm,
-                    "${byte:02X}     {instr} ${byte:02X},Y @ ${y_offset:02X} = #${val:02X}"
-                );
+                format!(" ${:02X},Y @ ${y_offset:02X} = #${val:02X}", bytes[1])
             }
             ABS => {
-                let byte1 = self.peek(addr, Access::Dummy);
-                let byte2 = self.peek(addr.wrapping_add(1), Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
+                bytes.push(self.peek(addr.wrapping_add(1), Access::Dummy));
                 let abs_addr = self.peek_u16(addr);
                 addr = addr.wrapping_add(2);
                 if instr.op() == JMP || instr.op() == JSR {
-                    let _ = write!(
-                        self.disasm,
-                        "${byte1:02X} ${byte2:02X} {instr} ${abs_addr:04X}"
-                    );
+                    format!(" ${abs_addr:04X}")
                 } else {
                     let val = self.peek(abs_addr, Access::Dummy);
-                    let _ = write!(
-                        self.disasm,
-                        "${byte1:02X} ${byte2:02X} {instr} ${abs_addr:04X} = #${val:02X}"
-                    );
+                    format!(" ${abs_addr:04X} = #${val:02X}")
                 }
             }
             ABX => {
-                let byte1 = self.peek(addr, Access::Dummy);
-                let byte2 = self.peek(addr.wrapping_add(1), Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
+                bytes.push(self.peek(addr.wrapping_add(1), Access::Dummy));
                 let abs_addr = self.peek_u16(addr);
                 addr = addr.wrapping_add(2);
                 let x_offset = abs_addr.wrapping_add(self.x.into());
                 let val = self.peek(x_offset, Access::Dummy);
-                let _ = write!(self.disasm, "${byte1:02X} ${byte2:02X} {instr} ${abs_addr:04X},X @ ${x_offset:04X} = #${val:02X}");
+                format!(" ${abs_addr:04X},X @ ${x_offset:04X} = #${val:02X}")
             }
             ABY => {
-                let byte1 = self.peek(addr, Access::Dummy);
-                let byte2 = self.peek(addr.wrapping_add(1), Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
+                bytes.push(self.peek(addr.wrapping_add(1), Access::Dummy));
                 let abs_addr = self.peek_u16(addr);
                 addr = addr.wrapping_add(2);
                 let y_offset = abs_addr.wrapping_add(self.y.into());
                 let val = self.peek(y_offset, Access::Dummy);
-                let _ = write!(self.disasm, "${byte1:02X} ${byte2:02X} {instr} ${abs_addr:04X},Y @ ${y_offset:04X} = #${val:02X}");
+                format!(" ${abs_addr:04X},Y @ ${y_offset:04X} = #${val:02X}")
             }
             IND => {
-                let byte1 = self.peek(addr, Access::Dummy);
-                let byte2 = self.peek(addr.wrapping_add(1), Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
+                bytes.push(self.peek(addr.wrapping_add(1), Access::Dummy));
                 let abs_addr = self.peek_u16(addr);
                 addr = addr.wrapping_add(2);
                 let lo = self.peek(abs_addr, Access::Dummy);
@@ -603,85 +831,97 @@ impl Cpu {
                     self.peek(abs_addr + 1, Access::Dummy)
                 };
                 let val = u16::from_le_bytes([lo, hi]);
-                let _ = write!(
-                    self.disasm,
-                    "${byte1:02X} ${byte2:02X} {instr} (${abs_addr:04X}) = ${val:04X}"
-                );
+                format!(" (${abs_addr:04X}) = ${val:04X}")
             }
             IDX => {
-                let byte = self.peek(addr, Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
                 addr = addr.wrapping_add(1);
-                let x_offset = byte.wrapping_add(self.x);
+                let x_offset = bytes[1].wrapping_add(self.x);
                 let abs_addr = self.peek_zp_u16(x_offset);
                 let val = self.peek(abs_addr, Access::Dummy);
-                let _ = write!(
-                    self.disasm,
-                    "${byte:02X}     {instr} (${byte:02X},X) @ ${abs_addr:04X} = #${val:02X}"
-                );
+                format!(" (${:02X},X) @ ${abs_addr:04X} = #${val:02X}", bytes[1])
             }
             IDY => {
-                let byte = self.peek(addr, Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
                 addr = addr.wrapping_add(1);
-                let abs_addr = self.peek_zp_u16(byte);
+                let abs_addr = self.peek_zp_u16(bytes[1]);
                 let y_offset = abs_addr.wrapping_add(self.y.into());
                 let val = self.peek(y_offset, Access::Dummy);
-                let _ = write!(
-                    self.disasm,
-                    "${byte:02X}     {instr} (${byte:02X}),Y @ ${y_offset:04X} = #${val:02X}"
-                );
+                format!(" (${:02X}),Y @ ${y_offset:04X} = #${val:02X}", bytes[1])
             }
             REL => {
-                let byte = self.peek(addr, Access::Dummy);
+                bytes.push(self.peek(addr, Access::Dummy));
                 let mut rel_addr: u16 = self.peek(addr, Access::Dummy).into();
                 addr = addr.wrapping_add(1);
                 if rel_addr & 0x80 == 0x80 {
                     // If address is negative, extend sign to 16-bits
                     rel_addr |= 0xFF00;
                 }
-                rel_addr = addr.wrapping_add(rel_addr);
-                let _ = write!(self.disasm, "${byte:02X}     {instr} ${rel_addr:04X}");
+                format!(" ${:04X}", addr.wrapping_add(rel_addr))
             }
-            ACC | IMP => (),
+            ACC | IMP => "".to_string(),
         };
         *pc = addr;
-        &self.disasm
+        for byte in &bytes {
+            let _ = write!(self.disasm, "{byte:02X} ");
+        }
+        for _ in 0..(3 - bytes.len()) {
+            self.disasm.push_str("   ");
+        }
+        let _ = write!(self.disasm, "{instr:?}{mode}");
     }
 
-    // Return the current instruction and status
+    // Print the current instruction and status
     pub fn trace_instr(&mut self) {
         let mut pc = self.pc;
-        let status = self.status;
-        let acc = self.acc;
-        let x = self.x;
-        let y = self.y;
-        let sp = self.sp;
-        let ppu_cycle = self.bus.ppu.cycle();
-        let ppu_scanline = self.bus.ppu.scanline();
-        let cycle = self.cycle;
-        let n = if status.contains(Status::N) { 'N' } else { 'n' };
-        let v = if status.contains(Status::V) { 'V' } else { 'v' };
-        let i = if status.contains(Status::I) { 'I' } else { 'i' };
-        let z = if status.contains(Status::Z) { 'Z' } else { 'z' };
-        let c = if status.contains(Status::C) { 'C' } else { 'c' };
+        self.disassemble(&mut pc);
+
+        let status_str = |status: Status, set: char, clear: char| {
+            if self.status.contains(status) {
+                set
+            } else {
+                clear
+            }
+        };
+
         log::trace!(
-            "{:<50} A:{acc:02X} X:{x:02X} Y:{y:02X} P:{n}{v}--d{i}{z}{c} SP:{sp:02X} PPU:{ppu_cycle:3},{ppu_scanline:3} CYC:{cycle}",
-            self.disassemble(&mut pc),
+            "{:<50} A:{:02X} X:{:02X} Y:{:02X} P:{}{}--{}{}{}{} SP:{:02X} PPU:{:3},{:3} CYC:{}",
+            self.disasm,
+            self.acc,
+            self.x,
+            self.y,
+            status_str(Status::N, 'N', 'n'),
+            status_str(Status::V, 'V', 'v'),
+            status_str(Status::D, 'd', 'd'),
+            status_str(Status::I, 'I', 'i'),
+            status_str(Status::Z, 'Z', 'z'),
+            status_str(Status::C, 'C', 'c'),
+            self.sp,
+            self.bus.ppu_cycle(),
+            self.bus.ppu_scanline(),
+            self.cycle,
         );
     }
 
     /// Utilities
     #[must_use]
+    #[inline]
     const fn pages_differ(addr1: u16, addr2: u16) -> bool {
         (addr1 & 0xFF00) != (addr2 & 0xFF00)
     }
 }
 
-impl Clock for Cpu {
-    /// Runs the CPU one instruction
-    fn clock(&mut self) -> usize {
+impl Cpu {
+    pub fn clock_inspect<F>(&mut self, mut inspect: F) -> usize
+        where
+            F: FnMut(&mut Cpu),
+    {
         let start_cycle = self.cycle;
 
-        self.trace_instr();
+        if log::log_enabled!(log::Level::Trace) {
+            self.trace_instr();
+        }
+        inspect(self);
 
         let opcode = self.read_instr(); // Cycle 1 of instruction
         self.instr = Cpu::INSTRUCTIONS[opcode as usize];
@@ -785,19 +1025,36 @@ impl Clock for Cpu {
         if self.prev_run_irq || self.prev_nmi {
             self.irq();
         }
+
+        if !self.cycle_accurate {
+            self.bus.clock_to(self.master_clock - Self::PPU_OFFSET);
+            let cycles = self.cycle - start_cycle;
+            for _ in 0..cycles {
+                self.bus.clock();
+            }
+            self.handle_interrupts();
+        }
+
         self.cycle - start_cycle
+    }
+}
+
+impl Clock for Cpu {
+    /// Runs the CPU one instruction
+    fn clock(&mut self) -> usize {
+        self.clock_inspect(|_| {})
     }
 }
 
 impl Mem for Cpu {
     fn read(&mut self, addr: u16, access: Access) -> u8 {
-        if self.dma_halt || self.bus.oam_dma() {
+        if self.halt || self.bus.oam_dma() {
             self.handle_dma(addr);
         }
 
-        self.start_cycle(self.read_cycles.start);
+        self.start_cycle(Cycle::Read);
         let val = self.bus.read(addr, access);
-        self.end_cycle(self.read_cycles.end);
+        self.end_cycle(Cycle::Read);
         val
     }
 
@@ -806,32 +1063,28 @@ impl Mem for Cpu {
     }
 
     fn write(&mut self, addr: u16, val: u8, access: Access) {
-        self.start_cycle(self.write_cycles.start);
+        self.start_cycle(Cycle::Write);
         self.bus.write(addr, val, access);
-        self.end_cycle(self.write_cycles.end);
+        self.end_cycle(Cycle::Write);
     }
 }
 
 impl Regional for Cpu {
+    #[inline]
     fn region(&self) -> NesRegion {
         self.region
     }
 
     fn set_region(&mut self, region: NesRegion) {
-        let (start_clocks, end_clocks) = match region {
-            NesRegion::Ntsc => (6, 6),
-            NesRegion::Pal => (8, 8),
-            NesRegion::Dendy => (7, 8),
+        let (clock_divider, start_clocks, end_clocks) = match region {
+            NesRegion::Ntsc => (12, 6, 6),
+            NesRegion::Pal => (16, 8, 8),
+            NesRegion::Dendy => (15, 7, 8),
         };
         self.region = region;
-        self.read_cycles = Cycle {
-            start: start_clocks - 1,
-            end: end_clocks + 1,
-        };
-        self.write_cycles = Cycle {
-            start: end_clocks + 1,
-            end: end_clocks - 1,
-        };
+        self.clock_divider = clock_divider;
+        self.start_clocks = start_clocks;
+        self.end_clocks = end_clocks;
         self.bus.set_region(region);
     }
 }
@@ -871,7 +1124,7 @@ impl Reset for Cpu {
         self.prev_nmi = false;
         self.prev_nmi_pending = false;
         self.corrupted = false;
-        self.dma_halt = false;
+        self.halt = false;
         self.dummy_read = false;
 
         // Read directly from bus so as to not clock other components during reset
@@ -880,8 +1133,8 @@ impl Reset for Cpu {
         self.pc = u16::from_le_bytes([lo, hi]);
 
         for _ in 0..7 {
-            self.start_cycle(self.read_cycles.start);
-            self.end_cycle(self.read_cycles.end);
+            self.start_cycle(Cycle::Read);
+            self.end_cycle(Cycle::Read);
         }
     }
 }
@@ -908,23 +1161,22 @@ impl fmt::Debug for Cpu {
             .field("corrupted", &self.corrupted)
             .field("run_irq", &self.run_irq)
             .field("last_run_irq", &self.prev_run_irq)
-            .field("halt", &self.dma_halt)
+            .field("halt", &self.halt)
             .field("dummy_read", &self.dummy_read)
             .finish()
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::{cart::Cart};
+    use crate::common::ResetKind;
 
     #[test]
     fn cycle_timing() {
         use super::*;
-        let mut cpu = Cpu::new(Bus::default());
+        let mut cpu = Cpu::new(CpuBus::default());
         let cart = Cart::empty();
-        cpu.bus.load_cart(cart);
+        cpu.load_cart(cart);
         cpu.reset(ResetKind::Hard);
         cpu.clock();
 
@@ -953,6 +1205,4 @@ mod tests {
             );
         }
     }
-
-  
 }

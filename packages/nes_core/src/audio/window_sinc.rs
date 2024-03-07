@@ -1,4 +1,7 @@
-use std::f32::consts::PI;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::f32::consts::PI;
+use num_traits::Float;
 
 #[must_use]
 pub struct WindowSinc {
@@ -100,8 +103,8 @@ impl WindowSinc {
     }
 }
 
-impl std::fmt::Debug for WindowSinc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for WindowSinc {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("WindowSinc")
             .field("m", &self.m)
             .field("fc", &self.fc)

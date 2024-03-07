@@ -1,113 +1,49 @@
 use alloc::string::{String, ToString};
-use alloc::vec;
 use alloc::vec::Vec;
+use core::ops::ControlFlow;
 use crate::{
     apu::{Apu, Channel},
-    bus::Bus,
+    bus::CpuBus,
     cart::Cart,
-    common::{Clock, NesRegion, Regional, Reset, ResetKind},
+    common::{Clock, ResetKind, NesRegion, Regional, Reset},
     cpu::Cpu,
-    genie::GenieCode,
     input::{FourPlayer, Joypad, Player},
     mapper::Mapper,
     mem::RamState,
     ppu::Ppu,
     video::{Video, VideoFilter},
-    NesResult,
 };
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[must_use]
-/// Control deck configuration settings.
-pub struct Config {
-    /// Video filter.
-    pub filter: VideoFilter,
-    /// NES region.
-    pub region: NesRegion,
-    /// RAM initialization state.
-    pub ram_state: RamState,
-    /// Four player adapter.
-    pub four_player: FourPlayer,
-    /// Enable zapper gun.
-    pub zapper: bool,
-    /// Game Genie codes.
-    pub genie_codes: Vec<GenieCode>,
-}
-
-impl PartialEq for Config {
-    fn eq(&self, other: &Self) -> bool {
-        self.filter == other.filter
-            && self.region == other.region
-            && self.ram_state == other.ram_state
-            && self.four_player == other.four_player
-            && self.zapper == other.zapper
-            && self.genie_codes == other.genie_codes
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            filter: VideoFilter::default(),
-            region: NesRegion::default(),
-            ram_state: RamState::Random,
-            four_player: FourPlayer::default(),
-            zapper: false,
-            genie_codes: vec![],
-        }
-    }
-}
+use anyhow::{anyhow,Result};
 
 /// Represents an NES Control Deck
 #[derive(Debug, Clone)]
 #[must_use]
 pub struct ControlDeck {
-    config: Config,
     running: bool,
+    ram_state: RamState,
+    region: NesRegion,
     video: Video,
     loaded_rom: Option<String>,
-    cart_battery_backed: bool,
     cycles_remaining: f32,
     cpu: Cpu,
 }
 
 impl Default for ControlDeck {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Drop for ControlDeck {
-    fn drop(&mut self) {
-        if let Err(err) = self.unload_rom() {
-            log::error!("failed to unload ROM: {err:?}");
-        }
+        Self::new(RamState::default())
     }
 }
 
 impl ControlDeck {
-    /// Create a NES `ControlDeck` with the default configuration.
-    pub fn new() -> Self {
-        Self::with_config(Config::default())
-    }
-
-    /// Create a NES `ControlDeck` with a configuration.
-    pub fn with_config(config: Config) -> Self {
-        let mut cpu = Cpu::new(Bus::new(config.ram_state));
-        cpu.set_region(config.region);
-        cpu.bus.input.set_four_player(config.four_player);
-        cpu.bus.input.connect_zapper(config.zapper);
-        for genie_code in config.genie_codes.iter().cloned() {
-            cpu.bus.add_genie_code(genie_code);
-        }
-        let video = Video::with_filter(config.filter);
+    /// Create a NES `ControlDeck`.
+    pub fn new(ram_state: RamState) -> Self {
+        let cpu = Cpu::new(CpuBus::new(ram_state));
         Self {
-            config,
             running: false,
-            video,
+            ram_state,
+            region: NesRegion::default(),
+            video: Video::default(),
             loaded_rom: None,
-            cart_battery_backed: false,
             cycles_remaining: 0.0,
             cpu,
         }
@@ -118,85 +54,87 @@ impl ControlDeck {
     /// # Errors
     ///
     /// If there is any issue loading the ROM, then an error is returned.
-    pub fn load_rom<S: ToString>(&mut self, name: S, rom: &[u8]) -> NesResult<()> {
-        self.unload_rom()?;
-        self.loaded_rom = Some(name.to_string());
-        let cart = Cart::from_rom(name, rom, self.config.ram_state)?;
-        self.cart_battery_backed = cart.battery_backed();
+    pub fn load_rom(&mut self, name: String, rom: Vec<u8>) -> Result<()> {
+        self.loaded_rom = Some(name.clone());
+        let cart = Cart::from_rom(name, rom, self.ram_state)?;
         self.set_region(cart.region());
-        self.cpu.bus.load_cart(cart);
+        self.cpu.load_cart(cart);
         self.reset(ResetKind::Hard);
-        self.running = true;
-        Ok(())
-    }
-    pub fn unload_rom(&mut self) -> NesResult<()> {
-        self.loaded_rom = None;
-        self.cpu.bus.unload_cart();
-        self.running = false;
         Ok(())
     }
 
+    #[inline]
     pub fn load_cpu(&mut self, cpu: Cpu) {
         self.cpu = cpu;
     }
 
-    pub fn config(&self) -> &Config {
-        &self.config
-    }
-
+    #[inline]
     #[must_use]
     pub const fn loaded_rom(&self) -> &Option<String> {
         &self.loaded_rom
     }
 
-    /// Returns whether the loaded Cart is battery-backed.
+    #[inline]
     #[must_use]
-    pub fn cart_battery_backed(&self) -> Option<bool> {
-        self.loaded_rom.as_ref().map(|_| self.cart_battery_backed)
+    pub const fn cart_battery_backed(&self) -> bool {
+        self.cpu.cart_battery_backed()
     }
 
-    /// Returns the NES Work RAM.
-    #[must_use]
-    pub fn wram(&self) -> &[u8] {
-        self.cpu.bus.wram()
-    }
-
-    /// Returns the battery-backed Save RAM.
+    #[inline]
     #[must_use]
     pub fn sram(&self) -> &[u8] {
-        self.cpu.bus.sram()
+        self.cpu.sram()
     }
 
+    #[inline]
+    pub fn load_sram(&mut self, sram: Vec<u8>) {
+        self.cpu.load_sram(sram);
+    }
 
-    /// Load a frame worth of pixels.
+    #[inline]
+    #[must_use]
+    pub fn wram(&self) -> &[u8] {
+        self.cpu.wram()
+    }
+
+    /// Get a frame worth of pixels.
+    #[inline]
+    #[must_use]
     pub fn frame_buffer(&mut self) -> &[u8] {
-        self.video.apply_filter(
-            self.cpu.bus.ppu.frame_buffer(),
-            self.cpu.bus.ppu.frame_number(),
-        )
+        self.video
+            .apply_filter(self.cpu.frame_buffer(), self.cpu.frame_number());
+        self.video.output()
     }
 
     /// Get the current frame number.
+    #[inline]
     #[must_use]
     pub const fn frame_number(&self) -> u32 {
-        self.cpu.bus.ppu.frame_number()
+        self.cpu.frame_number()
+    }
+
+    /// Audio sample rate.
+    #[inline]
+    #[must_use]
+    pub const fn sample_rate(&self) -> f32 {
+        self.cpu.clock_rate()
     }
 
     /// Get audio samples.
+    #[inline]
     #[must_use]
     pub fn audio_samples(&self) -> &[f32] {
-        self.cpu.bus.audio_samples()
+        self.cpu.audio_samples()
     }
 
     /// Clear audio samples.
-
+    #[inline]
     pub fn clear_audio_samples(&mut self) {
-        self.cpu.bus.clear_audio_samples();
+        self.cpu.clear_audio_samples();
     }
 
-    /// CPU clock rate based on currently configured NES region.
-    #[must_use]
-    pub const fn clock_rate(&self) -> f32 {
+    #[inline]
+    pub fn clock_rate(&mut self) -> f32 {
         self.cpu.clock_rate()
     }
 
@@ -205,12 +143,13 @@ impl ControlDeck {
     /// # Errors
     ///
     /// If CPU encounteres an invalid opcode, an error is returned.
-    pub fn clock_instr(&mut self) -> NesResult<usize> {
+    pub fn clock_instr(&mut self) -> Result<ControlFlow<usize, usize>> {
         let cycles = self.clock();
         if self.cpu_corrupted() {
-            panic!("cpu corrupted")
+            Err(anyhow!("cpu corrupted"))
+        } else {
+            Ok(ControlFlow::Continue(cycles))
         }
-        Ok(cycles)
     }
 
     /// Steps the control deck the number of seconds.
@@ -218,30 +157,69 @@ impl ControlDeck {
     /// # Errors
     ///
     /// If CPU encounteres an invalid opcode, an error is returned.
-    pub fn clock_seconds(&mut self, seconds: f32) -> NesResult<usize> {
+    pub fn clock_seconds(&mut self, seconds: f32) -> Result<ControlFlow<usize, usize>> {
         self.cycles_remaining += self.clock_rate() * seconds;
         let mut total_cycles = 0;
         while self.cycles_remaining > 0.0 {
-            let cycles = self.clock_instr()?;
+            match self.clock_instr()? {
+                ControlFlow::Break(cycles) => {
+                    total_cycles += cycles;
+                    self.cycles_remaining -= cycles as f32;
+                    return Ok(ControlFlow::Break(total_cycles));
+                }
+                ControlFlow::Continue(cycles) => {
+                    total_cycles += cycles;
+                    self.cycles_remaining -= cycles as f32;
+                }
+            }
+        }
+        Ok(ControlFlow::Continue(total_cycles))
+    }
+
+    /// Steps the control deck the number of seconds with an inspection function, executed on every
+    /// CPU clock.
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if .
+    pub fn clock_seconds_inspect<F>(
+        &mut self,
+        seconds: f32,
+        mut inspect: F,
+    ) -> Result<ControlFlow<usize, usize>>
+        where
+            F: FnMut(&mut Cpu),
+    {
+        self.cycles_remaining += self.clock_rate() * seconds;
+        let mut total_cycles = 0;
+        while self.cycles_remaining > 0.0 {
+            let cycles = self.cpu.clock_inspect(&mut inspect);
             total_cycles += cycles;
             self.cycles_remaining -= cycles as f32;
         }
-        Ok(total_cycles)
+        Ok(ControlFlow::Continue(total_cycles))
     }
 
-    /// Steps the control deck an entire frame.
+    /// Steps the control deck an entire frame
     ///
     /// # Errors
     ///
     /// If CPU encounteres an invalid opcode, an error is returned.
-
-    pub fn clock_frame(&mut self) -> NesResult<usize> {
+    pub fn clock_frame(&mut self) -> Result<ControlFlow<usize, usize>> {
         let mut total_cycles = 0;
         let frame = self.frame_number();
         while frame == self.frame_number() {
-            total_cycles += self.clock_instr()?;
+            match self.clock_instr()? {
+                ControlFlow::Break(cycles) => {
+                    total_cycles += cycles;
+                    return Ok(ControlFlow::Break(total_cycles));
+                }
+                ControlFlow::Continue(cycles) => {
+                    total_cycles += cycles;
+                }
+            }
         }
-        Ok(total_cycles)
+        Ok(ControlFlow::Continue(total_cycles))
     }
 
     /// Steps the control deck a single scanline.
@@ -249,97 +227,119 @@ impl ControlDeck {
     /// # Errors
     ///
     /// If CPU encounteres an invalid opcode, an error is returned.
-    pub fn clock_scanline(&mut self) -> NesResult<usize> {
-        let current_scanline = self.cpu.bus.ppu.scanline();
+    pub fn clock_scanline(&mut self) -> Result<ControlFlow<usize, usize>> {
+        let current_scanline = self.cpu.ppu_scanline();
         let mut total_cycles = 0;
-        while current_scanline == self.cpu.bus.ppu.scanline() {
-            total_cycles += self.clock_instr()?;
+        while current_scanline == self.cpu.ppu_scanline() {
+            match self.clock_instr()? {
+                ControlFlow::Break(cycles) => {
+                    total_cycles += cycles;
+                    return Ok(ControlFlow::Break(total_cycles));
+                }
+                ControlFlow::Continue(cycles) => {
+                    total_cycles += cycles;
+                }
+            }
         }
-        Ok(total_cycles)
+        Ok(ControlFlow::Continue(total_cycles))
     }
 
-    /// Returns whether the CPU is corrupted or not which means it encounted an invalid/unhandled
-    /// opcode and can't proceed executing the current ROM.
+    /// Returns whether the CPU is corrupted or not.
+    #[inline]
     #[must_use]
     pub const fn cpu_corrupted(&self) -> bool {
-        self.cpu.corrupted
+        self.cpu.corrupted()
     }
 
+    #[inline]
     pub const fn cpu(&self) -> &Cpu {
         &self.cpu
     }
 
+    #[inline]
     pub fn cpu_mut(&mut self) -> &mut Cpu {
         &mut self.cpu
     }
 
+    #[inline]
     pub const fn ppu(&self) -> &Ppu {
-        &self.cpu.bus.ppu
+        self.cpu.ppu()
     }
 
+    #[inline]
     pub fn ppu_mut(&mut self) -> &mut Ppu {
-        &mut self.cpu.bus.ppu
+        self.cpu.ppu_mut()
     }
 
+    #[inline]
     pub const fn apu(&self) -> &Apu {
-        &self.cpu.bus.apu
+        self.cpu.apu()
     }
 
+    #[inline]
     pub const fn mapper(&self) -> &Mapper {
-        &self.cpu.bus.ppu.bus.mapper
+        self.cpu.mapper()
     }
 
+    #[inline]
     pub fn mapper_mut(&mut self) -> &mut Mapper {
-        &mut self.cpu.bus.ppu.bus.mapper
+        self.cpu.mapper_mut()
     }
 
     /// Returns whether Four Score is enabled.
-
+    #[inline]
     pub const fn four_player(&self) -> FourPlayer {
-        self.cpu.bus.input.four_player
+        self.cpu.four_player()
     }
 
     /// Enable/Disable Four Score for 4-player controllers.
-
+    #[inline]
     pub fn set_four_player(&mut self, four_player: FourPlayer) {
-        self.cpu.bus.input.set_four_player(four_player);
+        self.cpu.set_four_player(four_player);
+    }
+
+    /// Enable/Disable cycle accurate mode
+    #[inline]
+    pub fn set_cycle_accurate(&mut self, enabled: bool) {
+        self.cpu.set_cycle_accurate(enabled);
     }
 
     /// Returns a mutable reference to a joypad.
-
+    #[inline]
     pub fn joypad_mut(&mut self, slot: Player) -> &mut Joypad {
-        self.cpu.bus.input.joypad_mut(slot)
+        self.cpu.joypad_mut(slot)
     }
 
     /// Returns the zapper aiming position for the given controller slot.
+    #[inline]
     #[must_use]
     pub const fn zapper_pos(&self) -> (i32, i32) {
-        let zapper = self.cpu.bus.input.zapper;
+        let zapper = self.cpu.zapper();
         (zapper.x(), zapper.y())
     }
 
     /// Trigger Zapper gun for a given controller slot.
-
+    #[inline]
     pub fn trigger_zapper(&mut self) {
-        self.cpu.bus.input.zapper.trigger();
+        self.cpu.zapper_mut().trigger();
     }
 
     /// Aim Zapper gun for a given controller slot.
-
+    #[inline]
     pub fn aim_zapper(&mut self, x: i32, y: i32) {
-        self.cpu.bus.input.zapper.aim(x, y);
+        self.cpu.zapper_mut().aim(x, y);
     }
 
     /// Set the image filter for video output.
-
+    #[inline]
     pub fn set_filter(&mut self, filter: VideoFilter) {
-        self.video.filter = filter;
+        self.video.set_filter(filter);
     }
 
     /// Enable Zapper gun.
-
+    #[inline]
     pub fn connect_zapper(&mut self, enabled: bool) {
-        self.cpu.bus.input.connect_zapper(enabled);
+        self.cpu.connect_zapper(enabled);
     }
 
     /// Add NES Game Genie codes.
@@ -347,29 +347,31 @@ impl ControlDeck {
     /// # Errors
     ///
     /// If genie code is invalid, an error is returned.
-
-    pub fn add_genie_code(&mut self, genie_code: String) -> NesResult<()> {
-        self.cpu.bus.add_genie_code(GenieCode::new(genie_code)?);
-        Ok(())
+    #[inline]
+    pub fn add_genie_code(&mut self, genie_code: String) -> Result<()> {
+        self.cpu.add_genie_code(genie_code)
     }
 
+    #[inline]
     pub fn remove_genie_code(&mut self, genie_code: &str) {
-        self.cpu.bus.remove_genie_code(genie_code);
+        self.cpu.remove_genie_code(genie_code);
     }
 
     /// Returns whether a given API audio channel is enabled.
+    #[inline]
     #[must_use]
     pub const fn channel_enabled(&self, channel: Channel) -> bool {
-        self.cpu.bus.apu.channel_enabled(channel)
+        self.cpu.audio_channel_enabled(channel)
     }
 
     /// Toggle one of the APU audio channels.
-
-    pub fn toggle_apu_channel(&mut self, channel: Channel) {
-        self.cpu.bus.apu.toggle_channel(channel);
+    #[inline]
+    pub fn toggle_channel(&mut self, channel: Channel) {
+        self.cpu.toggle_audio_channel(channel);
     }
 
     /// Is control deck running.
+    #[inline]
     #[must_use]
     pub const fn is_running(&self) -> bool {
         self.running
@@ -385,15 +387,15 @@ impl Clock for ControlDeck {
 
 impl Regional for ControlDeck {
     /// Get the NES format for the emulation.
-
+    #[inline]
     fn region(&self) -> NesRegion {
-        self.config.region
+        self.region
     }
 
     /// Set the NES format for the emulation.
-
+    #[inline]
     fn set_region(&mut self, region: NesRegion) {
-        self.config.region = region;
+        self.region = region;
         self.cpu.set_region(region);
     }
 }
@@ -402,5 +404,6 @@ impl Reset for ControlDeck {
     /// Resets the console.
     fn reset(&mut self, kind: ResetKind) {
         self.cpu.reset(kind);
+        self.running = true;
     }
 }

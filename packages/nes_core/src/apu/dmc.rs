@@ -1,4 +1,4 @@
-use crate::common::{Clock, NesRegion, Regional, Reset, ResetKind};
+use crate::common::{Clock, ResetKind, NesRegion, Regional, Reset};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -67,34 +67,41 @@ impl Dmc {
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn silent(&self) -> bool {
         self.force_silent
     }
 
+    #[inline]
     pub fn toggle_silent(&mut self) {
         self.force_silent = !self.force_silent;
     }
 
+    #[inline]
     #[must_use]
     pub const fn length(&self) -> u16 {
         self.length
     }
 
+    #[inline]
     #[must_use]
     pub const fn irq_enabled(&self) -> bool {
         self.irq_enabled
     }
 
+    #[inline]
     #[must_use]
     pub const fn irq_pending(&self) -> bool {
         self.irq_pending
     }
 
+    #[inline]
     pub fn acknowledge_irq(&mut self) {
         self.irq_pending = false;
     }
 
+    #[inline]
     #[must_use]
     pub fn dma(&mut self) -> bool {
         let pending = self.dma_pending;
@@ -102,11 +109,13 @@ impl Dmc {
         pending
     }
 
+    #[inline]
     #[must_use]
     pub const fn dma_addr(&self) -> u16 {
         self.addr
     }
 
+    #[inline]
     pub fn load_buffer(&mut self, val: u8) {
         self.dma_pending = false;
         if self.length > 0 {
@@ -128,6 +137,7 @@ impl Dmc {
         }
     }
 
+    #[inline]
     const fn freq_timer(region: NesRegion, val: u8) -> u16 {
         match region {
             NesRegion::Ntsc => Self::FREQ_TABLE_NTSC[(val & 0x0F) as usize] - 2,
@@ -135,6 +145,7 @@ impl Dmc {
         }
     }
 
+    #[inline]
     #[must_use]
     pub fn output(&self) -> f32 {
         if self.force_silent {
@@ -145,7 +156,6 @@ impl Dmc {
     }
 
     // $4010 DMC timer
-
     pub fn write_timer(&mut self, val: u8) {
         self.irq_enabled = val & 0x80 == 0x80;
         self.loops = val & 0x40 == 0x40;
@@ -156,19 +166,19 @@ impl Dmc {
     }
 
     // $4011 DMC output
-
+    #[inline]
     pub fn write_output(&mut self, val: u8) {
         self.output = val;
     }
 
     // $4012 DMC addr load
-
+    #[inline]
     pub fn write_addr_load(&mut self, val: u8) {
         self.addr_load = 0xC000 | (u16::from(val) << 6);
     }
 
     // $4013 DMC length
-
+    #[inline]
     pub fn write_length(&mut self, val: u8) {
         self.length_load = (u16::from(val) << 4) + 1;
     }
@@ -186,6 +196,7 @@ impl Dmc {
         }
     }
 
+    #[inline]
     pub fn check_pending_dma(&mut self) {
         if self.init > 0 {
             self.init -= 1;
@@ -235,10 +246,12 @@ impl Clock for Dmc {
 }
 
 impl Regional for Dmc {
+    #[inline]
     fn region(&self) -> NesRegion {
         self.region
     }
 
+    #[inline]
     fn set_region(&mut self, region: NesRegion) {
         self.region = region;
         self.freq_timer = Self::freq_timer(region, 0);

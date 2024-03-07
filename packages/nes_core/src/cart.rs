@@ -1,15 +1,24 @@
+use alloc::{format, vec};
 use alloc::string::{String, ToString};
-use alloc::{format, vec, vec::Vec};
-use crate::{common::{NesRegion, Regional}, mapper::{
-    m024_m026_vrc6::Vrc6Revision, Axrom, Bf909x, Cnrom, Exrom, Gxrom, Mapper, Mmc1Revision,
-    Nrom, Pxrom, Sxrom, Txrom, Uxrom, Vrc6,
-}, mem::RamState, ppu::Mirroring, NesResult, NesError};
+use alloc::vec::Vec;
+use anyhow::{anyhow, bail, Context};
+use crate::{
+    common::{NesRegion, Regional},
+    mapper::{
+        m024_m026_vrc6::Vrc6Revision, Axrom, Bf909x, Cnrom, Exrom, Gxrom, Mapper, Mmc1Revision,
+        Nrom, Pxrom, Sxrom, Txrom, Uxrom, Vrc6,
+    },
+    mem::RamState,
+    ppu::Mirroring,
+};
+use anyhow::Result;
+use core::convert::TryInto;
 
 const PRG_ROM_BANK_SIZE: usize = 0x4000;
 const CHR_ROM_BANK_SIZE: usize = 0x2000;
 
 /// An NES cartridge.
-#[derive(Default)]
+#[derive(Default, Clone)]
 #[must_use]
 pub struct Cart {
     name: String,
@@ -17,8 +26,10 @@ pub struct Cart {
     region: NesRegion,
     ram_state: RamState,
     pub(crate) mapper: Mapper,
-    pub(crate) chr: Vec<u8>,
-    // Character ROM/RAM
+    pub(crate) chr_rom: Vec<u8>,
+    // Character ROM
+    pub(crate) chr_ram: Vec<u8>,
+    // Character RAM
     pub(crate) ex_ram: Vec<u8>,
     // Internal Extra RAM
     pub(crate) prg_rom: Vec<u8>,
@@ -34,7 +45,8 @@ impl Cart {
             region: NesRegion::default(),
             ram_state: RamState::default(),
             mapper: Mapper::none(),
-            chr: vec![0x00; CHR_ROM_BANK_SIZE],
+            chr_rom: vec![0x00; CHR_ROM_BANK_SIZE],
+            chr_ram: vec![],
             ex_ram: vec![],
             prg_rom: vec![0x00; PRG_ROM_BANK_SIZE],
             prg_ram: vec![],
@@ -49,52 +61,35 @@ impl Cart {
     ///
     /// If the NES header is invalid, or the ROM data does not match the header, then an error is
     /// returned.
-    pub fn from_rom<S>(name: S, rom_data: &[u8], ram_state: RamState) -> NesResult<Self>
-        where
-            S: ToString,
+    pub fn from_rom(name: String, rom_data: Vec<u8>, ram_state: RamState) -> Result<Self>
     {
-        let name = name.to_string();
-        let header = NesHeader::load(&rom_data)?;
-
-        let mut prg_rom = vec![0x00; (header.prg_rom_banks as usize) * PRG_ROM_BANK_SIZE];
-        let offset = 16;
-        if rom_data.len() - offset < prg_rom.len() {
-            return Err(NesError::new(format!("invalid rom header '{}'. prg-rom banks: {}. bytes remaining: {}",
-                                             name, header.prg_rom_banks, rom_data.len() - offset)));
-        }
-        for i in 0..prg_rom.len() {
-            prg_rom[i] = rom_data[i + offset];
-        }
-        let prg_ram_size = Self::calculate_ram_size(header.prg_ram_shift)?;
+        let header = NesHeader::load(&rom_data[0..16])?;
+        let prg_rom_len = (header.prg_rom_banks as usize) * PRG_ROM_BANK_SIZE;
+        let mut prg_rom = rom_data[16..16 + prg_rom_len].to_vec();
+        let prg_ram_size = Self::calculate_ram_size(header.prg_ram_shift).context("prg_ram")?;
         let mut prg_ram = vec![0x00; prg_ram_size];
         RamState::fill(&mut prg_ram, ram_state);
-
-        let mut chr = vec![0x00; (header.chr_rom_banks as usize) * CHR_ROM_BANK_SIZE];
-        if header.chr_rom_banks > 0 {
-            let offset = prg_rom.len() + offset;
-            if rom_data.len() - offset < chr.len() {
-                return Err(NesError::new(format!("invalid rom header '{}'. chr-rom banks: {}. bytes remaining: {}",
-                                                 name, header.chr_rom_banks, rom_data.len() - offset)));
-            }
-            for i in 0..chr.len() {
-                chr[i] = rom_data[i + offset];
-            }
+        let chr_rom_len = (header.chr_rom_banks as usize) * CHR_ROM_BANK_SIZE;
+        let mut chr_rom = if header.chr_rom_banks > 0 {
+            rom_data[16 + prg_rom_len..16 + prg_rom_len + chr_rom_len].to_vec()
+        } else {
+            vec![0x00; chr_rom_len]
+        };
+        let mut chr_ram = vec![];
+        if chr_rom.is_empty() {
+            let chr_ram_size = Self::calculate_ram_size(header.chr_ram_shift).context("chr_ram")?;
+            chr_ram.resize(chr_ram_size, 0x00);
+            RamState::fill(&mut chr_ram, ram_state);
         }
 
-        if chr.is_empty() {
-            let chr_ram_size = Self::calculate_ram_size(header.chr_ram_shift)?;
-            chr.resize(chr_ram_size, 0x00);
-            RamState::fill(&mut chr, ram_state);
-        }
-        //
-        let region = NesRegion::default();
         let mut cart = Self {
             name,
             header,
-            region,
+            region: NesRegion::default(),
             ram_state,
             mapper: Mapper::none(),
-            chr,
+            chr_rom,
+            chr_ram,
             ex_ram: vec![],
             prg_rom,
             prg_ram,
@@ -113,63 +108,83 @@ impl Cart {
             66 => Gxrom::load(&mut cart),
             71 => Bf909x::load(&mut cart),
             155 => Sxrom::load(&mut cart, Mmc1Revision::A),
-            _ => panic!("unimplemented mapper: {}", cart.header.mapper_num),
+            _ => bail!("unimplemented mapper: {}", cart.header.mapper_num),
         };
 
-        log::info!("loaded ROM `{cart}`");
-        log::debug!("{cart:?}");
+        log::info!("Loaded `{}`", cart);
+        log::debug!("{:?}", cart);
         Ok(cart)
     }
 
+    #[inline]
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    #[inline]
     #[must_use]
-    pub fn chr(&self) -> &[u8] {
-        &self.chr
+    pub fn chr_rom(&self) -> &[u8] {
+        &self.chr_rom
     }
 
+    #[inline]
+    #[must_use]
+    pub fn chr_ram(&self) -> &[u8] {
+        &self.chr_ram
+    }
+
+    #[inline]
     #[must_use]
     pub fn prg_rom(&self) -> &[u8] {
         &self.prg_rom
     }
 
+    #[inline]
     #[must_use]
     pub fn prg_ram(&self) -> &[u8] {
         &self.prg_ram
     }
 
+    #[inline]
     #[must_use]
     pub fn has_chr(&self) -> bool {
-        !self.chr.is_empty()
+        !self.chr_rom.is_empty() || !self.chr_ram.is_empty()
     }
 
+    #[inline]
     #[must_use]
     pub fn chr_len(&self) -> usize {
-        self.chr.len()
+        if !self.chr_rom.is_empty() {
+            self.chr_rom.len()
+        } else if !self.chr_ram.is_empty() {
+            self.chr_ram.len()
+        } else {
+            0
+        }
     }
 
+    #[inline]
     #[must_use]
     pub fn has_prg_ram(&self) -> bool {
         !self.prg_ram.is_empty()
     }
 
     /// Returns whether this cartridge has battery-backed Save RAM.
+    #[inline]
     #[must_use]
     pub const fn battery_backed(&self) -> bool {
         self.header.flags & 0x02 == 0x02
     }
 
     /// Returns `RamState`.
-
+    #[inline]
     pub const fn ram_state(&self) -> RamState {
         self.ram_state
     }
 
     /// Returns hardware configured `Mirroring`.
-
+    #[inline]
     pub fn mirroring(&self) -> Mirroring {
         if self.header.flags & 0x08 == 0x08 {
             Mirroring::FourScreen
@@ -183,18 +198,21 @@ impl Cart {
     }
 
     /// Returns the Mapper number for this Cart.
+    #[inline]
     #[must_use]
     pub const fn mapper_num(&self) -> u16 {
         self.header.mapper_num
     }
 
     /// Returns the Sub-Mapper number for this Cart.
+    #[inline]
     #[must_use]
     pub const fn submapper_num(&self) -> u8 {
         self.header.submapper_num
     }
 
     /// Returns the Mapper and Board name for this Cart.
+    #[inline]
     #[must_use]
     pub const fn mapper_board(&self) -> &'static str {
         self.header.mapper_board()
@@ -208,8 +226,8 @@ impl Cart {
 
     /// Allows mappers to add CHR-RAM.
     pub(crate) fn add_chr_ram(&mut self, capacity: usize) {
-        self.chr.resize(capacity, 0x00);
-        RamState::fill(&mut self.chr, self.ram_state);
+        self.chr_ram.resize(capacity, 0x00);
+        RamState::fill(&mut self.chr_ram, self.ram_state);
     }
 
     /// Allows mappers to add EX-RAM.
@@ -218,11 +236,11 @@ impl Cart {
         RamState::fill(&mut self.ex_ram, self.ram_state);
     }
 
-    fn calculate_ram_size(value: u8) -> NesResult<usize> {
+    fn calculate_ram_size(value: u8) -> Result<usize> {
         if value > 0 {
             64usize
                 .checked_shl(value.into())
-                .ok_or_else(|| NesError::new(format!("invalid header ram size: ${:02X}", value)))
+                .ok_or_else(|| anyhow!("invalid header ram size: ${:02X}", value))
         } else {
             Ok(0)
         }
@@ -230,23 +248,26 @@ impl Cart {
 }
 
 impl Regional for Cart {
+    #[inline]
     fn region(&self) -> NesRegion {
         self.region
     }
 
+    #[inline]
     fn set_region(&mut self, region: NesRegion) {
         self.region = region;
     }
 }
 
 impl core::fmt::Display for Cart {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::result::Result<(), core::fmt::Error> {
         write!(
             f,
-            "{} - {}, CHR: {}K, PRG-ROM: {}K, PRG-RAM: {}K, Mirroring: {:?}, Battery: {}",
+            "{} - {}, CHR-ROM: {}K, CHR-RAM: {}K, PRG-ROM: {}K, PRG-RAM: {}K, Mirroring: {:?}, Battery: {}",
             self.name,
             self.mapper_board(),
-            self.chr.len() / 0x0400,
+            self.chr_rom.len() / 0x0400,
+            self.chr_ram.len() / 0x0400,
             self.prg_rom.len() / 0x0400,
             self.prg_ram.len() / 0x0400,
             self.mirroring(),
@@ -265,7 +286,8 @@ impl core::fmt::Debug for Cart {
             .field("mapper", &self.mapper)
             .field("mirroring", &self.mirroring())
             .field("battery_backed", &self.battery_backed())
-            .field("chr_len", &self.chr.len())
+            .field("chr_rom_len", &self.chr_rom.len())
+            .field("chr_ram_len", &self.chr_ram.len())
             .field("ex_ram_len", &self.ex_ram.len())
             .field("prg_rom_len", &self.prg_rom.len())
             .field("prg_ram_len", &self.prg_ram.len())
@@ -308,21 +330,15 @@ impl NesHeader {
     /// # Errors
     ///
     /// If the NES header is invalid, then an error is returned.
-    pub fn load(rom_data: &[u8]) -> NesResult<Self> {
-        let mut header = [0u8; 16];
-        for i in 0..header.len() {
-            if i < rom_data.len() {
-                header[i] = rom_data[i];
-            }
-        }
-
+    pub fn load(header: &[u8]) -> Result<Self> {
         // Header checks
+        assert_eq!(header.len(), 16);
         if header[0..4] != *b"NES\x1a" {
-            panic!("nes header signature not found");
+            bail!("nes header signature not found");
         } else if (header[7] & 0x0C) == 0x04 {
-            panic!("header is corrupted by `DiskDude!`. repair and try again");
+            bail!("header is corrupted by `DiskDude!`. repair and try again");
         } else if (header[7] & 0x0C) == 0x0C {
-            panic!("unrecognized header format. repair and try again");
+            bail!("unrecognized header format. repair and try again");
         }
 
         let mut prg_rom_banks = u16::from(header[4]);
@@ -356,18 +372,18 @@ impl NesHeader {
             vs_data = header[13];
 
             if prg_ram_shift & 0x0F == 0x0F || prg_ram_shift & 0xF0 == 0xF0 {
-                panic!("invalid prg-ram size in header");
+                bail!("invalid prg-ram size in header");
             } else if chr_ram_shift & 0x0F == 0x0F || chr_ram_shift & 0xF0 == 0xF0 {
-                panic!("invalid chr-ram size in header");
+                bail!("invalid chr-ram size in header");
             } else if chr_ram_shift & 0xF0 == 0xF0 {
-                panic!("battery-backed chr-ram is currently not supported");
+                bail!("battery-backed chr-ram is currently not supported");
             } else if header[14] > 0 || header[15] > 0 {
-                panic!("unrecognized data found at header offsets 14-15");
+                bail!("unrecognized data found at header offsets 14-15");
             }
         } else {
             for (i, header) in header.iter().enumerate().take(16).skip(8) {
                 if *header > 0 {
-                    panic!(
+                    bail!(
                         "unrecogonized data found at header offset {}. repair and try again",
                         i,
                     );
@@ -377,7 +393,7 @@ impl NesHeader {
 
         // Trainer
         if flags & 0x04 == 0x04 {
-            panic!("trained roms are currently not supported.");
+            bail!("trained roms are currently not supported.");
         }
 
         Ok(Self {
@@ -440,7 +456,7 @@ mod tests {
         ($(($test:ident, $data:expr, $header:expr$(,)?)),*$(,)?) => {$(
             #[test]
             fn $test() {
-                let header = NesHeader::load(&mut $data.as_slice()).expect("valid header");
+                let header = NesHeader::load($data.as_slice()).expect("valid header");
                 assert_eq!(header, $header);
             }
         )*};
@@ -450,7 +466,7 @@ mod tests {
     test_headers!(
         (
             mapper000_horizontal,
-            [0x4E, 0x45, 0x53, 0x1A,
+            [0x4Eu8, 0x45, 0x53, 0x1A,
              0x02, 0x01, 0x01, 0x00,
              0x00, 0x00, 0x00, 0x00,
              0x00, 0x00, 0x00, 0x00],
@@ -465,7 +481,7 @@ mod tests {
         ),
         (
             mapper001_vertical,
-            [0x4E, 0x45, 0x53, 0x1A,
+            [0x4Eu8, 0x45, 0x53, 0x1A,
              0x08, 0x00, 0x10, 0x00,
              0x00, 0x00, 0x00, 0x00,
              0x00, 0x00, 0x00, 0x00],

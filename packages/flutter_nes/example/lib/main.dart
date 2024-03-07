@@ -1,72 +1,32 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
+import 'package:flutter_nes/flutter_nes.dart';
 
-import 'package:flutter_nes/flutter_nes.dart' as flutter_nes;
-
-void main() async{
-  await flutter_nes.RustLib.init();
+Future<void> main() async {
+  await RustLib.init();
   runApp(const MyApp());
 }
 
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  late int sumResult;
-  late Future<int> sumAsyncResult;
-
-  @override
-  void initState() {
-    super.initState();
-    sumResult = flutter_nes.sum(a:1, b:2);
-    sumAsyncResult = flutter_nes.sumAsync(a:3, b:4);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    const textStyle = TextStyle(fontSize: 25);
-    const spacerSmall = SizedBox(height: 10);
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Native Packages'),
-        ),
+        appBar: AppBar(title: const Text('Base Data Format Is rgba')),
         body: SingleChildScrollView(
-          child: Container(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              children: [
-                const Text(
-                  'This calls a native function through FFI that is shipped as source in the package. '
-                  'The native code is built as part of the Flutter Runner build.',
-                  style: textStyle,
-                  textAlign: TextAlign.center,
-                ),
-                spacerSmall,
-                Text(
-                  'sum(1, 2) = $sumResult',
-                  style: textStyle,
-                  textAlign: TextAlign.center,
-                ),
-                spacerSmall,
-                FutureBuilder<int>(
-                  future: sumAsyncResult,
-                  builder: (BuildContext context, AsyncSnapshot<int> value) {
-                    final displayValue =
-                        (value.hasData) ? value.data : 'loading';
-                    return Text(
-                      'await sumAsync(3, 4) = $displayValue',
-                      style: textStyle,
-                      textAlign: TextAlign.center,
-                    );
-                  },
-                ),
-              ],
-            ),
+          child: Column(
+            children: [
+              Text("Texture Render"),
+              NesWidget.assets(assets: "assets/SuperMario.nes",
+              config: NesConfigEx.create(
+                filter: VideoFilter.pixellate,
+                fps: 30
+              ),),
+              Divider(),
+              Text("Decode Using decodeImageFromPixels Then paint"),
+              NesTextureWidget.assets(assets: "assets/SuperMario.nes"),
+            ],
           ),
         ),
       ),

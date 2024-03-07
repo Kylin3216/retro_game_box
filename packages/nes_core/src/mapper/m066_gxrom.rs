@@ -29,7 +29,7 @@ impl Gxrom {
     pub fn load(cart: &mut Cart) -> Mapper {
         let gxrom = Self {
             mirroring: cart.mirroring(),
-            chr_banks: MemBanks::new(0x0000, 0x1FFF, cart.chr.len(), Self::CHR_WINDOW),
+            chr_banks: MemBanks::new(0x0000, 0x1FFF, cart.chr_rom.len(), Self::CHR_WINDOW),
             prg_rom_banks: MemBanks::new(0x8000, 0xFFFF, cart.prg_rom.len(), Self::PRG_ROM_WINDOW),
         };
         gxrom.into()
@@ -44,7 +44,7 @@ impl MemMap for Gxrom {
         match addr {
             0x0000..=0x1FFF => MappedRead::Chr(self.chr_banks.translate(addr)),
             0x8000..=0xFFFF => MappedRead::PrgRom(self.prg_rom_banks.translate(addr)),
-            _ => MappedRead::PpuRam,
+            _ => MappedRead::None,
         }
     }
 
@@ -54,15 +54,17 @@ impl MemMap for Gxrom {
             self.prg_rom_banks
                 .set(0, ((val & Self::PRG_BANK_MASK) >> 4).into());
         }
-        MappedWrite::PpuRam
+        MappedWrite::None
     }
 }
 
 impl Mapped for Gxrom {
+    #[inline]
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    #[inline]
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }

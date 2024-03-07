@@ -51,10 +51,12 @@ impl Bf909x {
 }
 
 impl Mapped for Bf909x {
+    #[inline]
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    #[inline]
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }
@@ -69,7 +71,7 @@ impl MemMap for Bf909x {
         match addr {
             0x0000..=0x1FFF => MappedRead::Chr(addr.into()),
             0x8000..=0xFFFF => MappedRead::PrgRom(self.prg_rom_banks.translate(addr)),
-            _ => MappedRead::PpuRam,
+            _ => MappedRead::None,
         }
     }
 
@@ -90,9 +92,9 @@ impl MemMap for Bf909x {
                         Mirroring::SingleScreenB
                     };
                 }
-                MappedWrite::PpuRam
+                MappedWrite::None
             }
-            _ => MappedWrite::PpuRam,
+            _ => MappedWrite::None,
         }
     }
 }

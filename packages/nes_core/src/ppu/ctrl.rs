@@ -1,4 +1,4 @@
-use crate::common::{Reset, ResetKind};
+use crate::common::{ResetKind, Reset};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
@@ -41,10 +41,12 @@ impl PpuCtrl {
         Self::from_bits_truncate(0x00)
     }
 
+    #[inline]
     pub fn write(&mut self, val: u8) {
         *self = Self::from_bits_truncate(val);
     }
 
+    #[inline]
     #[must_use]
     pub fn nametable_addr(&self) -> u16 {
         match self.bits() & 0b11 {
@@ -56,36 +58,57 @@ impl PpuCtrl {
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn vram_increment(&self) -> u16 {
-        // 32 or 1
-        self.contains(Self::VRAM_INCREMENT) as u16 * 31 + 1
+        if self.contains(Self::VRAM_INCREMENT) {
+            32
+        } else {
+            1
+        }
     }
 
+    #[inline]
     #[must_use]
     pub const fn spr_select(&self) -> u16 {
-        // 0x1000 or 0x0000
-        self.contains(Self::SPR_SELECT) as u16 * 0x1000
+        if self.contains(Self::SPR_SELECT) {
+            0x1000
+        } else {
+            0x0000
+        }
     }
 
+    #[inline]
     #[must_use]
     pub const fn bg_select(&self) -> u16 {
-        // 0x1000 or 0x0000
-        self.contains(Self::BG_SELECT) as u16 * 0x1000
+        if self.contains(Self::BG_SELECT) {
+            0x1000
+        } else {
+            0x0000
+        }
     }
 
+    #[inline]
     #[must_use]
     pub const fn spr_height(&self) -> u32 {
-        // 16 or 8
-        self.contains(Self::SPR_HEIGHT) as u32 * 8 + 8
+        if self.contains(Self::SPR_HEIGHT) {
+            16
+        } else {
+            8
+        }
     }
 
+    #[inline]
     #[must_use]
     pub const fn master_slave(&self) -> u8 {
-        // 1 or 0
-        self.contains(Self::MASTER_SLAVE) as u8
+        if self.contains(Self::MASTER_SLAVE) {
+            1
+        } else {
+            0
+        }
     }
 
+    #[inline]
     #[must_use]
     pub const fn nmi_enabled(&self) -> bool {
         self.contains(Self::NMI_ENABLE)

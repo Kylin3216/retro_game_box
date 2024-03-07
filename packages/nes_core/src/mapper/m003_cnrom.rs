@@ -26,7 +26,7 @@ impl Cnrom {
     pub fn load(cart: &mut Cart) -> Mapper {
         let cnrom = Self {
             mirroring: cart.mirroring(),
-            chr_banks: MemBanks::new(0x0000, 0x1FFFF, cart.chr.len(), Self::CHR_ROM_WINDOW),
+            chr_banks: MemBanks::new(0x0000, 0x1FFFF, cart.chr_rom.len(), Self::CHR_ROM_WINDOW),
             mirror_prg_rom: cart.prg_rom.len() <= 0x4000,
         };
         cnrom.into()
@@ -46,7 +46,7 @@ impl MemMap for Cnrom {
                 let mirror = if self.mirror_prg_rom { 0x3FFF } else { 0x7FFF };
                 MappedRead::PrgRom((addr & mirror).into())
             }
-            _ => MappedRead::PpuRam,
+            _ => MappedRead::None,
         }
     }
 
@@ -54,15 +54,17 @@ impl MemMap for Cnrom {
         if matches!(addr, 0x8000..=0xFFFF) {
             self.chr_banks.set(0, val.into());
         }
-        MappedWrite::PpuRam
+        MappedWrite::None
     }
 }
 
 impl Mapped for Cnrom {
+    #[inline]
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    #[inline]
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }

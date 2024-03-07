@@ -1,7 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use crate::{
-    common::{Reset, ResetKind},
+    common::{ResetKind, Reset},
     ppu::Ppu,
 };
 use serde::{Deserialize, Serialize};
@@ -29,16 +29,19 @@ impl Frame {
         }
     }
 
+    #[inline]
     pub fn increment(&mut self) {
         self.count = self.count.wrapping_add(1);
         core::mem::swap(&mut self.front_buffer, &mut self.back_buffer);
     }
 
+    #[inline]
     #[must_use]
     pub fn pixel(&self, x: u32, y: u32) -> u16 {
         self.back_buffer[(x + (y << 8)) as usize]
     }
 
+    #[inline]
     pub fn set_pixel(&mut self, x: u32, y: u32, color: u16) {
         self.back_buffer[(x + (y << 8)) as usize] = color;
     }
@@ -50,11 +53,13 @@ impl Frame {
         u32::from(red) + u32::from(green) + u32::from(blue)
     }
 
+    #[inline]
     #[must_use]
     pub const fn number(&self) -> u32 {
         self.count
     }
 
+    #[inline]
     #[must_use]
     pub fn buffer(&self) -> &[u16] {
         &self.front_buffer

@@ -1,6 +1,6 @@
 use crate::{
     apu::{envelope::Envelope, length_counter::LengthCounter, sweep::Sweep},
-    common::{Clock, Reset, ResetKind},
+    common::{Clock, ResetKind, Reset},
 };
 use serde::{Deserialize, Serialize};
 
@@ -69,20 +69,24 @@ impl Pulse {
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn silent(&self) -> bool {
         self.force_silent
     }
 
+    #[inline]
     pub fn toggle_silent(&mut self) {
         self.force_silent = !self.force_silent;
     }
 
+    #[inline]
     #[must_use]
     pub const fn length_counter(&self) -> u8 {
         self.length.counter()
     }
 
+    #[inline]
     pub fn clock_quarter_frame(&mut self) {
         self.envelope.clock();
     }
@@ -142,7 +146,6 @@ impl Pulse {
     }
 
     // $4000 Pulse control
-
     pub fn write_ctrl(&mut self, val: u8) {
         self.duty_cycle = (val >> 6) & 0x03; // D7..D6
         self.length.write_ctrl(val);
@@ -150,7 +153,6 @@ impl Pulse {
     }
 
     // $4001 Pulse sweep
-
     pub fn write_sweep(&mut self, val: u8) {
         self.sweep.timer = (val >> 4) & 0x07; // D6..D4
         self.sweep.negate = (val >> 3) & 1 == 1; // D3
@@ -160,13 +162,11 @@ impl Pulse {
     }
 
     // $4002 Pulse timer lo
-
     pub fn write_timer_lo(&mut self, val: u8) {
         self.freq_timer = (self.freq_timer & 0xFF00) | u16::from(val); // D7..D0
     }
 
     // $4003 Pulse timer hi
-
     pub fn write_timer_hi(&mut self, val: u8) {
         self.freq_timer = (self.freq_timer & 0x00FF) | u16::from(val & 0x07) << 8; // D2..D0
         self.freq_counter = self.freq_timer;

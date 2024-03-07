@@ -1,4 +1,4 @@
-use crate::common::{Clock, NesRegion, Reset, ResetKind};
+use crate::common::{Clock, ResetKind, NesRegion, Reset};
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -48,11 +48,13 @@ impl FrameCounter {
         }
     }
 
+    #[inline]
     pub(crate) fn set_region(&mut self, region: NesRegion) {
         self.region = region;
         self.step_cycles = Self::step_cycles(region);
     }
 
+    #[inline]
     const fn step_cycles(region: NesRegion) -> [[u16; 6]; 2] {
         match region {
             NesRegion::Ntsc | NesRegion::Dendy => Self::STEP_CYCLES_NTSC,
@@ -60,6 +62,7 @@ impl FrameCounter {
         }
     }
 
+    #[inline]
     pub(crate) fn update(&mut self) -> bool {
         if let Some(val) = self.write_buffer {
             self.write_delay -= 1;

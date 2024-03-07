@@ -4,7 +4,7 @@
 
 use crate::{
     cart::Cart,
-    common::{Clock, Regional, Reset, ResetKind},
+    common::{Clock, ResetKind, Regional, Reset},
     mapper::{Mapped, MappedRead, MappedWrite, Mapper, MemMap, Mirroring},
     mem::MemBanks,
 };
@@ -43,7 +43,7 @@ impl Pxrom {
             mirroring: cart.mirroring(),
             latch: [0x00; 2],
             latch_banks: [0x00; 4],
-            chr_banks: MemBanks::new(0x0000, 0x1FFF, cart.chr.len(), Self::CHR_ROM_WINDOW),
+            chr_banks: MemBanks::new(0x0000, 0x1FFF, cart.chr_rom.len(), Self::CHR_ROM_WINDOW),
             prg_rom_banks: MemBanks::new(0x8000, 0xFFFF, cart.prg_rom.len(), Self::PRG_WINDOW),
         };
         let last_bank = pxrom.prg_rom_banks.last();
@@ -62,10 +62,12 @@ impl Pxrom {
 }
 
 impl Mapped for Pxrom {
+    #[inline]
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    #[inline]
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }
@@ -97,7 +99,7 @@ impl MemMap for Pxrom {
             0x0000..=0x1FFF => MappedRead::Chr(self.chr_banks.translate(addr)),
             0x6000..=0x7FFF => MappedRead::PrgRam((addr & 0x1FFF).into()),
             0x8000..=0xFFFF => MappedRead::PrgRom(self.prg_rom_banks.translate(addr)),
-            _ => MappedRead::PpuRam,
+            _ => MappedRead::None,
         }
     }
 
@@ -106,12 +108,12 @@ impl MemMap for Pxrom {
             0x6000..=0x7FFF => MappedWrite::PrgRam((addr & 0x1FFF).into(), val),
             0xA000..=0xAFFF => {
                 self.prg_rom_banks.set(0, (val & 0x0F).into());
-                MappedWrite::PpuRam
+                MappedWrite::None
             }
             0xB000..=0xEFFF => {
                 self.latch_banks[((addr - 0xB000) >> 12) as usize] = val & 0x1F;
                 self.update_banks();
-                MappedWrite::PpuRam
+                MappedWrite::None
             }
             0xF000..=0xFFFF => {
                 self.mirroring = match val & Self::MIRRORING_MASK {
@@ -119,9 +121,9 @@ impl MemMap for Pxrom {
                     1 => Mirroring::Horizontal,
                     _ => unreachable!("impossible mirroring mode"),
                 };
-                MappedWrite::PpuRam
+                MappedWrite::None
             }
-            _ => MappedWrite::PpuRam,
+            _ => MappedWrite::None,
         }
     }
 }

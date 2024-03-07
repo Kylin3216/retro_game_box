@@ -2,7 +2,7 @@
 //!
 //! <https://www.nesdev.org/wiki/VRC_IRQ>
 
-use crate::common::{Clock, Reset, ResetKind};
+use crate::common::{Clock, ResetKind, Reset};
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
@@ -18,6 +18,7 @@ pub struct VrcIrq {
 }
 
 impl VrcIrq {
+    #[inline]
     pub fn write_reload(&mut self, val: u8) {
         self.reload = val;
     }
@@ -35,11 +36,13 @@ impl VrcIrq {
         self.pending = false;
     }
 
+    #[inline]
     #[must_use]
     pub const fn pending(&self) -> bool {
         self.pending
     }
 
+    #[inline]
     pub fn acknowledge(&mut self) {
         self.enabled = self.enabled_after_ack;
         self.pending = false;

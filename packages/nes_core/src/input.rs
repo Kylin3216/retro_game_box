@@ -1,45 +1,56 @@
+use core::str::FromStr;
 use crate::{
-    common::{Clock, NesRegion, Reset, ResetKind},
+    common::{Clock, ResetKind, NesRegion, Reset},
     cpu::Cpu,
     ppu::Ppu,
 };
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[must_use]
 pub enum Player {
-    #[default]
     One,
     Two,
     Three,
     Four,
 }
 
-impl AsRef<str> for Player {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::One => "Player One",
-            Self::Two => "Player Two",
-            Self::Three => "Player Three",
-            Self::Four => "Player Four",
-        }
+impl Default for Player {
+    fn default() -> Self {
+        Self::One
     }
 }
 
 pub trait InputRegisters {
-    fn read(&mut self, player: Player, ppu: &Ppu) -> u8;
-    fn peek(&self, player: Player, ppu: &Ppu) -> u8;
+    fn read(&mut self, slot: Player, ppu: &Ppu) -> u8;
+    fn peek(&self, slot: Player, ppu: &Ppu) -> u8;
     fn write(&mut self, val: u8);
 }
 
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
 #[must_use]
 pub enum FourPlayer {
     #[default]
     Disabled,
     FourScore,
     Satellite,
+}
+
+impl FourPlayer {
+    pub const fn as_slice() -> &'static [Self] {
+        &[Self::Disabled, Self::FourScore, Self::Satellite]
+    }
+}
+
+impl From<usize> for FourPlayer {
+    fn from(value: usize) -> Self {
+        match value {
+            1 => Self::FourScore,
+            2 => Self::Satellite,
+            _ => Self::Disabled,
+        }
+    }
 }
 
 impl AsRef<str> for FourPlayer {
@@ -52,15 +63,28 @@ impl AsRef<str> for FourPlayer {
     }
 }
 
+impl FromStr for FourPlayer {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "disabled" => Ok(Self::Disabled),
+            "fourscore" => Ok(Self::FourScore),
+            "satellite" => Ok(Self::Satellite),
+            _ => Err(
+                "invalid FourScore value. valid options: `disabled`, `fourscore`, or `satellite`",
+            ),
+        }
+    }
+}
+
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
 #[must_use]
 pub struct Input {
     joypads: [Joypad; 4],
     signatures: [Joypad; 2],
-    pub zapper: Zapper,
-    #[serde(skip)]
+    zapper: Zapper,
     turbo_timer: u32,
-    pub four_player: FourPlayer,
+    four_player: FourPlayer,
 }
 
 impl Input {
@@ -78,18 +102,37 @@ impl Input {
         }
     }
 
-    pub const fn joypad(&self, player: Player) -> &Joypad {
-        &self.joypads[player as usize]
+    #[inline]
+    pub const fn joypad(&self, slot: Player) -> &Joypad {
+        &self.joypads[slot as usize]
     }
 
-    pub fn joypad_mut(&mut self, player: Player) -> &mut Joypad {
-        &mut self.joypads[player as usize]
+    #[inline]
+    pub fn joypad_mut(&mut self, slot: Player) -> &mut Joypad {
+        &mut self.joypads[slot as usize]
     }
 
+    #[inline]
     pub fn connect_zapper(&mut self, connected: bool) {
         self.zapper.connected = connected;
     }
 
+    #[inline]
+    pub const fn zapper(&self) -> &Zapper {
+        &self.zapper
+    }
+
+    #[inline]
+    pub fn zapper_mut(&mut self) -> &mut Zapper {
+        &mut self.zapper
+    }
+
+    #[inline]
+    pub const fn four_player(&self) -> FourPlayer {
+        self.four_player
+    }
+
+    #[inline]
     pub fn set_four_player(&mut self, four_player: FourPlayer) {
         self.four_player = four_player;
         self.reset(ResetKind::Hard);
@@ -97,66 +140,64 @@ impl Input {
 }
 
 impl InputRegisters for Input {
-    fn read(&mut self, player: Player, ppu: &Ppu) -> u8 {
+    fn read(&mut self, slot: Player, ppu: &Ppu) -> u8 {
         // Read $4016/$4017 D0 8x for controller #1/#2.
         // Read $4016/$4017 D0 8x for controller #3/#4.
         // Read $4016/$4017 D0 8x for signature: 0b00010000/0b00100000
-        let zapper = if player == Player::Two {
+        let zapper = if slot == Player::Two {
             self.zapper.read(ppu)
         } else {
             0x00
         };
 
-        let player = player as usize;
-        assert!(player < 4);
+        let slot = slot as usize;
         let val = match self.four_player {
-            FourPlayer::Disabled => self.joypads[player].read(),
+            FourPlayer::Disabled => self.joypads[slot].read(),
             FourPlayer::FourScore => {
-                if self.joypads[player].index() < 8 {
-                    self.joypads[player].read()
-                } else if self.joypads[player + 2].index() < 8 {
-                    self.joypads[player + 2].read()
-                } else if self.signatures[player].index() < 8 {
-                    self.signatures[player].read()
+                if self.joypads[slot].index() < 8 {
+                    self.joypads[slot].read()
+                } else if self.joypads[slot + 2].index() < 8 {
+                    self.joypads[slot + 2].read()
+                } else if self.signatures[slot].index() < 8 {
+                    self.signatures[slot].read()
                 } else {
                     0x01
                 }
             }
             FourPlayer::Satellite => {
-                self.joypads[player].read() | (self.joypads[player + 2].read() << 1)
+                self.joypads[slot].read() | (self.joypads[slot + 2].read() << 1)
             }
         };
 
         zapper | val | 0x40
     }
 
-    fn peek(&self, player: Player, ppu: &Ppu) -> u8 {
+    fn peek(&self, slot: Player, ppu: &Ppu) -> u8 {
         // Read $4016/$4017 D0 8x for controller #1/#2.
         // Read $4016/$4017 D0 8x for controller #3/#4.
         // Read $4016/$4017 D0 8x for signature: 0b00010000/0b00100000
-        let zapper = if player == Player::Two {
+        let zapper = if slot == Player::Two {
             self.zapper.read(ppu)
         } else {
             0x00
         };
 
-        let player = player as usize;
-        assert!(player < 4);
+        let slot = slot as usize;
         let val = match self.four_player {
-            FourPlayer::Disabled => self.joypads[player].peek(),
+            FourPlayer::Disabled => self.joypads[slot].peek(),
             FourPlayer::FourScore => {
-                if self.joypads[player].index() < 8 {
-                    self.joypads[player].peek()
-                } else if self.joypads[player + 2].index() < 8 {
-                    self.joypads[player + 2].peek()
-                } else if self.signatures[player].index() < 8 {
-                    self.signatures[player].peek()
+                if self.joypads[slot].index() < 8 {
+                    self.joypads[slot].peek()
+                } else if self.joypads[slot + 2].index() < 8 {
+                    self.joypads[slot + 2].peek()
+                } else if self.signatures[slot].index() < 8 {
+                    self.signatures[slot].peek()
                 } else {
                     0x01
                 }
             }
             FourPlayer::Satellite => {
-                self.joypads[player].peek() | (self.joypads[player + 2].peek() << 1)
+                self.joypads[slot].peek() | (self.joypads[slot + 2].peek() << 1)
             }
         };
 
@@ -176,9 +217,7 @@ impl InputRegisters for Input {
 impl Clock for Input {
     fn clock(&mut self) -> usize {
         self.zapper.clock();
-        if self.turbo_timer > 0 {
-            self.turbo_timer -= 1;
-        }
+        self.turbo_timer -= 1;
         if self.turbo_timer == 0 {
             // Roughly 20Hz
             self.turbo_timer += 89500;
@@ -302,11 +341,13 @@ impl Joypad {
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn button(&self, button: JoypadBtnState) -> bool {
         self.buttons.contains(button)
     }
 
+    #[inline]
     pub fn set_button(&mut self, button: JoypadBtnState, pressed: bool) {
         self.buttons.set(button, pressed);
     }
@@ -345,6 +386,7 @@ impl Joypad {
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn index(&self) -> u8 {
         self.index
@@ -370,16 +412,19 @@ pub struct Zapper {
 }
 
 impl Zapper {
+    #[inline]
     #[must_use]
     pub const fn x(&self) -> i32 {
         self.x
     }
 
+    #[inline]
     #[must_use]
     pub const fn y(&self) -> i32 {
         self.y
     }
 
+    #[inline]
     pub fn trigger(&mut self) {
         if self.triggered <= 0.0 {
             // Zapper takes ~100ms to change to "released" after trigger is pulled
@@ -387,6 +432,7 @@ impl Zapper {
         }
     }
 
+    #[inline]
     pub fn aim(&mut self, x: i32, y: i32) {
         self.x = x;
         self.y = y;
@@ -404,6 +450,7 @@ impl Zapper {
         }
     }
 
+    #[inline]
     #[must_use]
     fn read(&self, ppu: &Ppu) -> u8 {
         if self.connected {
@@ -413,6 +460,7 @@ impl Zapper {
         }
     }
 
+    #[inline]
     fn triggered(&self) -> u8 {
         if self.triggered > 0.0 {
             0x10

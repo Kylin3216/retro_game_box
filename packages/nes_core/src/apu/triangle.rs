@@ -1,6 +1,6 @@
 use crate::{
     apu::{length_counter::LengthCounter, linear_counter::LinearCounter},
-    common::{Clock, Reset, ResetKind},
+    common::{Clock, ResetKind, Reset},
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,15 +37,18 @@ impl Triangle {
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn silent(&self) -> bool {
         self.force_silent
     }
 
+    #[inline]
     pub fn toggle_silent(&mut self) {
         self.force_silent = !self.force_silent;
     }
 
+    #[inline]
     #[must_use]
     pub const fn length_counter(&self) -> u8 {
         self.length.counter()
@@ -62,6 +65,7 @@ impl Triangle {
         }
     }
 
+    #[inline]
     pub fn clock_half_frame(&mut self) {
         self.length.clock();
     }

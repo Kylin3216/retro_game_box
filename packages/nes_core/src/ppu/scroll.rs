@@ -1,4 +1,4 @@
-use crate::common::{Reset, ResetKind};
+use crate::common::{ResetKind, Reset};
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
@@ -47,7 +47,7 @@ impl PpuScroll {
     // || |||| +++------ high 3 bits of coarse Y (y/4)
     // || ++++---------- attribute offset (960 bytes)
     // ++--------------- nametable select
-
+    #[inline]
     #[must_use]
     pub const fn attr_addr(&self) -> u16 {
         let nametable_select = self.v & (Self::NT_X_MASK | Self::NT_Y_MASK);
@@ -56,11 +56,13 @@ impl PpuScroll {
         Self::ATTR_START | nametable_select | y_bits | x_bits
     }
 
+    #[inline]
     #[must_use]
     pub const fn attr_shift(&self) -> u16 {
         (self.v & 0x02) | ((self.v >> 4) & 0x04)
     }
 
+    #[inline]
     #[must_use]
     pub const fn read_addr(&self) -> u16 {
         self.v
@@ -69,7 +71,6 @@ impl PpuScroll {
     // Writes to PPUSCROLL affect v and t
     // 1st write writes X
     // 2nd write writes Y
-
     pub fn write(&mut self, val: u8) {
         let val = u16::from(val);
         let lo_5_bit_mask: u16 = 0x1F;
@@ -102,7 +103,7 @@ impl PpuScroll {
     // 1st write writes hi 6 bits
     // 2nd write writes lo 8 bits
     // Total size is a 14 bit addr
-
+    #[inline]
     pub fn write_addr(&mut self, val: u8) {
         if self.write_latch {
             // Write lo address on second write
@@ -127,14 +128,14 @@ impl PpuScroll {
 
     // Returns Coarse X: XXXXX from PPUADDR v
     // yyy NN YYYYY XXXXX
-
+    #[inline]
     #[must_use]
     pub const fn coarse_x(&self) -> u16 {
         self.v & Self::COARSE_X_MASK
     }
 
     // Returns Fine X: xxx from x register
-
+    #[inline]
     #[must_use]
     pub const fn fine_x(&self) -> u16 {
         self.x
@@ -142,7 +143,7 @@ impl PpuScroll {
 
     // Returns Coarse Y: YYYYY from PPUADDR v
     // yyy NN YYYYY XXXXX
-
+    #[inline]
     #[must_use]
     pub const fn coarse_y(&self) -> u16 {
         (self.v & Self::COARSE_Y_MASK) >> 5
@@ -150,7 +151,7 @@ impl PpuScroll {
 
     // Returns Fine Y: yyy from PPUADDR v
     // yyy NN YYYYY XXXXX
-
+    #[inline]
     #[must_use]
     pub const fn fine_y(&self) -> u16 {
         self.v >> 12
@@ -158,14 +159,14 @@ impl PpuScroll {
 
     // Increment PPUADDR v by either 1 (going across) or 32 (going down)
     // Address wraps around
-
+    #[inline]
     pub fn increment(&mut self, val: u16) {
         self.v = self.v.wrapping_add(val);
         self.v &= Self::ADDR_MIRROR;
     }
 
     // Copy Coarse X from register t and add it to PPUADDR v
-
+    #[inline]
     pub fn copy_x(&mut self) {
         //    .....N.. ...XXXXX
         // t: .....F.. ...EDCBA
@@ -175,7 +176,7 @@ impl PpuScroll {
     }
 
     // Copy Fine y and Coarse Y from register t and add it to PPUADDR v
-
+    #[inline]
     pub fn copy_y(&mut self) {
         //    .yyyN.YY YYY.....
         // t: .IHGF.ED CBA.....
@@ -188,7 +189,6 @@ impl PpuScroll {
     // 0-4 bits are incremented, with overflow toggling bit 10 which switches the horizontal
     // nametable
     // http://wiki.nesdev.com/w/index.php/PPU_scrolling#Wrapping_around
-
     pub fn increment_x(&mut self) {
         // let v = self.v;
         // If we've reached the last column, toggle horizontal nametable
@@ -203,7 +203,6 @@ impl PpuScroll {
     // Bits 12-14 are incremented for Fine Y, with overflow incrementing coarse Y in bits 5-9 with
     // overflow toggling bit 11 which switches the vertical nametable
     // http://wiki.nesdev.com/w/index.php/PPU_scrolling#Wrapping_around
-
     pub fn increment_y(&mut self) {
         if (self.v & Self::FINE_Y_MASK) == Self::FINE_Y_MASK {
             self.v &= !Self::FINE_Y_MASK; // set fine y = 0 and overflow into coarse y
@@ -226,10 +225,12 @@ impl PpuScroll {
         }
     }
 
+    #[inline]
     pub fn reset_latch(&mut self) {
         self.write_latch = false;
     }
 
+    #[inline]
     pub fn write_nametable_select(&mut self, val: u8) {
         let nt_mask = Self::NT_Y_MASK | Self::NT_X_MASK;
         // val: ......BA

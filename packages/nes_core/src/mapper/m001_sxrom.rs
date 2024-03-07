@@ -5,7 +5,7 @@
 
 use crate::{
     cart::Cart,
-    common::{Clock, Regional, Reset, ResetKind},
+    common::{Clock, ResetKind, Regional, Reset},
     mapper::{Mapped, MappedRead, MappedWrite, Mapper, MemMap},
     mem::MemBanks,
     ppu::Mirroring,
@@ -146,16 +146,19 @@ impl Sxrom {
         }
     }
 
+    #[inline]
     fn prg_ram_enabled(&self) -> bool {
         self.board == Mmc1Revision::A || self.regs.prg & Self::PRG_RAM_DISABLED == 0
     }
 }
 
 impl Mapped for Sxrom {
+    #[inline]
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    #[inline]
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }
@@ -174,7 +177,7 @@ impl MemMap for Sxrom {
                 MappedRead::PrgRam(self.prg_ram_banks.translate(addr))
             }
             0x8000..=0xFFFF => MappedRead::PrgRom(self.prg_rom_banks.translate(addr)),
-            _ => MappedRead::PpuRam,
+            _ => MappedRead::None,
         }
     }
 
@@ -234,7 +237,7 @@ impl MemMap for Sxrom {
                 // +----- PRG-RAM chip enable (0: enabled; 1: disabled; ignored on MMC1A)
 
                 if self.regs.write_just_occurred > 0 {
-                    return MappedWrite::PpuRam;
+                    return MappedWrite::None;
                 }
                 self.regs.write_just_occurred = 2;
                 if val & Self::SHIFT_REG_RESET > 0 {
@@ -258,9 +261,9 @@ impl MemMap for Sxrom {
                         self.update_banks(addr);
                     }
                 }
-                MappedWrite::PpuRam
+                MappedWrite::None
             }
-            _ => MappedWrite::PpuRam,
+            _ => MappedWrite::None,
         }
     }
 }
@@ -312,10 +315,10 @@ impl core::fmt::Debug for SxRegs {
                 "shift_register",
                 &format_args!("0b{:08b}", self.shift_register),
             )
-            .field("control", &format_args!("${:02X}", self.control))
-            .field("chr0", &format_args!("${:02X}", self.chr0))
-            .field("chr1", &format_args!("${:02X}", self.chr1))
-            .field("prg", &format_args!("${:02X}", self.prg))
+            .field("control", &format_args!("0x{:02X}", self.control))
+            .field("chr0", &format_args!("0x{:02X}", self.chr0))
+            .field("chr1", &format_args!("0x{:02X}", self.chr1))
+            .field("prg", &format_args!("0x{:02X}", self.prg))
             .finish()
     }
 }

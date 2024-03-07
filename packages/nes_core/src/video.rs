@@ -1,14 +1,10 @@
 use alloc::vec;
 use alloc::vec::Vec;
-use crate::{ppu::Ppu};
+use crate::ppu::Ppu;
 use serde::{Deserialize, Serialize};
-use core::{
-    f64::consts::PI,
-    ops::{Deref, DerefMut},
-};
+use core::f64::consts::PI;
 use lazy_static::lazy_static;
-// use thingbuf::Recycle;
-
+use num_traits::Float;
 #[derive(Default, Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[must_use]
 pub enum VideoFilter {
@@ -42,61 +38,11 @@ impl From<usize> for VideoFilter {
     }
 }
 
-#[derive(Debug, Clone)]
-#[must_use]
-pub struct Frame(Vec<u8>);
-
-impl Frame {
-    pub const SIZE: usize = Ppu::SIZE * 4;
-
-    /// Allocate a new frame for video output.
-    pub fn new() -> Self {
-        let mut frame = vec![0; Self::SIZE];
-        frame
-            .iter_mut()
-            .skip(3)
-            .step_by(4)
-            .for_each(|alpha| *alpha = 255);
-        Self(frame)
-    }
-}
-
-impl Default for Frame {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// #[derive(Debug)]
-// #[must_use]
-// pub struct FrameRecycle;
-
-// impl Recycle<Frame> for FrameRecycle {
-//     fn new_element(&self) -> Frame {
-//         Frame::new()
-//     }
-//
-//     fn recycle(&self, _frame: &mut Frame) {}
-// }
-
-impl Deref for Frame {
-    type Target = Vec<u8>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for Frame {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
 #[derive(Clone)]
 #[must_use]
 pub struct Video {
-    pub filter: VideoFilter,
-    frame: Frame,
+    filter: VideoFilter,
+    output: Vec<u8>,
 }
 
 impl Default for Video {
@@ -106,33 +52,47 @@ impl Default for Video {
 }
 
 impl Video {
-    /// Create a new Video decoder with the default filter.
     pub fn new() -> Self {
-        Self::with_filter(VideoFilter::default())
-    }
-
-    /// Create a new Video encoder with a filter.
-    pub fn with_filter(filter: VideoFilter) -> Self {
+        let mut output = vec![0x00; 4 * Ppu::SIZE];
+        // Force alpha to 255.
+        for p in output.iter_mut().skip(3).step_by(4) {
+            *p = 255;
+        }
         Self {
-            filter,
-            frame: Frame::new(),
+            filter: VideoFilter::default(),
+            output,
         }
     }
 
-    /// Applies the given filer to the video buffer and returns the result.
-    pub fn apply_filter(&mut self, buffer: &[u16], frame_number: u32) -> &[u8] {
+    #[inline]
+    pub const fn filter(&self) -> VideoFilter {
+        self.filter
+    }
+
+    #[inline]
+    pub fn set_filter(&mut self, filter: VideoFilter) {
+        self.filter = filter;
+    }
+
+    // Returns a fully rendered frame of RENDER_SIZE RGB colors
+    pub fn apply_filter(&mut self, buffer: &[u16], frame_number: u32) {
         match self.filter {
             VideoFilter::Pixellate => self.decode_buffer(buffer),
             VideoFilter::Ntsc => self.apply_ntsc_filter(buffer, frame_number),
         }
-        &self.frame
     }
 
-    /// Fills a fully rendered frame with RGB colors.
+    #[inline]
+    #[must_use]
+    pub fn output(&self) -> &[u8] {
+        &self.output
+    }
+
     pub fn decode_buffer(&mut self, buffer: &[u16]) {
-        for (pixel, colors) in buffer.iter().zip(self.frame.chunks_exact_mut(4)) {
-            let (red, green, blue) = Ppu::system_palette(*pixel);
+        assert!(buffer.len() * 4 == self.output.len());
+        for (pixel, colors) in buffer.iter().zip(self.output.chunks_exact_mut(4)) {
             assert!(colors.len() > 2);
+            let (red, green, blue) = Ppu::system_palette(*pixel);
             colors[0] = red;
             colors[1] = green;
             colors[2] = blue;
@@ -144,12 +104,12 @@ impl Video {
     // to translate it to Rust
     // Source: https://bisqwit.iki.fi/jutut/kuvat/programming_examples/nesemu1/nesemu1.cc
     // http://wiki.nesdev.com/w/index.php/NTSC_video
-
     pub fn apply_ntsc_filter(&mut self, buffer: &[u16], frame_number: u32) {
+        assert!(buffer.len() * 4 == self.output.len());
         let mut prev_pixel = 0;
         for (idx, (pixel, colors)) in buffer
             .iter()
-            .zip(self.frame.chunks_exact_mut(4))
+            .zip(self.output.chunks_exact_mut(4))
             .enumerate()
         {
             let x = idx % 256;
@@ -177,12 +137,13 @@ impl core::fmt::Debug for Video {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Video")
             .field("filter", &self.filter)
+            .field("output_len", &self.output.len())
             .finish()
     }
 }
 
 lazy_static! {
-     static ref NTSC_PALETTE: Vec<u32> = {
+    pub static ref NTSC_PALETTE: Vec<u32> ={
         // NOTE: There's lot's to clean up here -- too many magic numbers and duplication but
         // I'm afraid to touch it now that it works
         // Source: https://bisqwit.iki.fi/jutut/kuvat/programming_examples/nesemu1/nesemu1.cc
@@ -275,6 +236,7 @@ lazy_static! {
                 }
             }
         }
+
         ntsc_palette
     };
 }

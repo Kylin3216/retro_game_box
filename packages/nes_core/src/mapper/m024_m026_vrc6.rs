@@ -6,7 +6,7 @@ use crate::{
     apu::PULSE_TABLE,
     audio::Audio,
     cart::Cart,
-    common::{Clock, Regional, Reset, ResetKind},
+    common::{Clock, ResetKind, Regional, Reset},
     mapper::{vrc_irq::VrcIrq, Mapped, MappedRead, MappedWrite, Mapper, MemMap},
     mem::MemBanks,
     ppu::Mirroring,
@@ -62,18 +62,20 @@ impl Vrc6 {
             nt_banks: [0; 4],
             prg_ram_banks: MemBanks::new(0x6000, 0x7FFF, cart.prg_ram.len(), Self::PRG_RAM_SIZE),
             prg_rom_banks: MemBanks::new(0x8000, 0xFFFF, cart.prg_rom.len(), Self::PRG_WINDOW),
-            chr_banks: MemBanks::new(0x0000, 0x1FFF, cart.chr.len(), Self::CHR_WINDOW),
+            chr_banks: MemBanks::new(0x0000, 0x1FFF, cart.chr_rom.len(), Self::CHR_WINDOW),
         };
         let last_bank = vrc6.prg_rom_banks.last();
         vrc6.prg_rom_banks.set(3, last_bank);
         vrc6.into()
     }
 
+    #[inline]
     #[must_use]
     const fn prg_ram_enabled(&self) -> bool {
         self.regs.banking_mode & 0x80 == 0x80
     }
 
+    #[inline]
     fn set_nametables(&mut self, nametables: &[usize]) {
         for (bank, page) in nametables.iter().enumerate() {
             self.set_nametable_page(bank, *page);
@@ -91,6 +93,7 @@ impl Vrc6 {
         }
     }
 
+    #[inline]
     fn set_nametable_page(&mut self, bank: usize, page: usize) {
         self.nt_banks[bank] = page;
     }
@@ -222,14 +225,17 @@ impl Vrc6 {
 }
 
 impl Mapped for Vrc6 {
+    #[inline]
     fn irq_pending(&self) -> bool {
         self.irq.pending()
     }
 
+    #[inline]
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    #[inline]
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }
@@ -268,7 +274,7 @@ impl MemMap for Vrc6 {
                 MappedRead::PrgRam(self.prg_ram_banks.translate(addr))
             }
             0x8000..=0xFFFF => MappedRead::PrgRom(self.prg_rom_banks.translate(addr)),
-            _ => MappedRead::PpuRam,
+            _ => MappedRead::None,
         }
     }
 
@@ -324,11 +330,12 @@ impl MemMap for Vrc6 {
             0xF002 => self.irq.acknowledge(),
             _ => (),
         }
-        MappedWrite::PpuRam
+        MappedWrite::None
     }
 }
 
 impl Audio for Vrc6 {
+    #[inline]
     #[must_use]
     fn output(&self) -> f32 {
         self.audio.output()
@@ -381,6 +388,7 @@ impl Vrc6Audio {
         }
     }
 
+    #[inline]
     #[must_use]
     fn output(&self) -> f32 {
         let pulse_scale = PULSE_TABLE[PULSE_TABLE.len() - 1] / 15.0;
@@ -483,10 +491,12 @@ impl Vrc6Pulse {
         }
     }
 
+    #[inline]
     fn set_freq_shift(&mut self, val: u8) {
         self.freq_shift = val;
     }
 
+    #[inline]
     fn volume(&self) -> f32 {
         if self.enabled && (self.ignore_duty || self.step <= self.duty_cycle) {
             f32::from(self.volume)
@@ -559,10 +569,12 @@ impl Vrc6Saw {
         }
     }
 
+    #[inline]
     fn set_freq_shift(&mut self, val: u8) {
         self.freq_shift = val;
     }
 
+    #[inline]
     fn volume(&self) -> f32 {
         if self.enabled {
             f32::from(self.accum >> 3)

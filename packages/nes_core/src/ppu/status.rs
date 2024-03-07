@@ -1,4 +1,4 @@
-use crate::common::{Reset, ResetKind};
+use crate::common::{ResetKind, Reset};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
@@ -41,37 +41,45 @@ impl PpuStatus {
         Self::from_bits_truncate(0x00)
     }
 
+    #[inline]
     pub fn write(&mut self, val: u8) {
         *self = Self::from_bits_truncate(val);
     }
 
+    #[inline]
     #[must_use]
     pub const fn read(&self) -> u8 {
         self.bits()
     }
 
+    #[inline]
     pub fn set_spr_overflow(&mut self, val: bool) {
         self.set(Self::SPR_OVERFLOW, val);
     }
 
+    #[inline]
     #[must_use]
     pub const fn spr_zero_hit(&self) -> bool {
         self.contains(Self::SPR_ZERO_HIT)
     }
 
+    #[inline]
     pub fn set_spr_zero_hit(&mut self, val: bool) {
         self.set(Self::SPR_ZERO_HIT, val);
     }
 
+    #[inline]
     #[must_use]
     pub const fn in_vblank(&self) -> bool {
         self.contains(Self::VBLANK_STARTED)
     }
 
+    #[inline]
     pub fn set_in_vblank(&mut self, val: bool) {
         self.set(Self::VBLANK_STARTED, val);
     }
 
+    #[inline]
     pub fn reset_in_vblank(&mut self) {
         self.remove(Self::VBLANK_STARTED);
     }

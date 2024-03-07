@@ -1,11 +1,6 @@
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
-use core::cmp;
-use crate::{NesError, NesResult};
+use anyhow::{Error,Result,anyhow};
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
-use core::fmt::Write;
 
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[must_use]
@@ -20,21 +15,6 @@ impl NesRegion {
     pub const fn as_slice() -> &'static [Self] {
         &[NesRegion::Ntsc, NesRegion::Pal, NesRegion::Dendy]
     }
-
-    #[must_use]
-    pub const fn is_ntsc(&self) -> bool {
-        matches!(self, Self::Ntsc)
-    }
-
-    #[must_use]
-    pub const fn is_pal(&self) -> bool {
-        matches!(self, Self::Pal)
-    }
-
-    #[must_use]
-    pub const fn is_dendy(&self) -> bool {
-        matches!(self, Self::Dendy)
-    }
 }
 
 impl AsRef<str> for NesRegion {
@@ -48,14 +28,14 @@ impl AsRef<str> for NesRegion {
 }
 
 impl TryFrom<&str> for NesRegion {
-    type Error = NesError;
+    type Error = Error;
 
-    fn try_from(value: &str) -> NesResult<Self> {
+    fn try_from(value: &str) -> Result<Self> {
         match value {
             "NTSC" => Ok(Self::Ntsc),
             "PAL" => Ok(Self::Pal),
             "Dendy" => Ok(Self::Dendy),
-            _ => Err(NesError::new("invalid nes region".to_string())),
+            _ => Err(anyhow!("invalid nes region")),
         }
     }
 }
@@ -101,7 +81,7 @@ pub trait Clock {
 #[macro_export]
 macro_rules! btree_map {
     { $($key:expr => $value:expr),* $(,)? } => {{
-        let mut m = ::alloc::collections::BTreeMap::new();
+        let mut m = alloc::collections::BTreeMap::new();
         $(
             m.insert($key, $value);
         )*
@@ -112,57 +92,4 @@ macro_rules! btree_map {
             $hm.insert($key, $value);
         )*
     });
-}
-
-/// Prints a hex dump of a given byte array starting at `addr_offset`.
-#[must_use]
-pub fn hexdump(data: &[u8], addr_offset: usize) -> Vec<String> {
-    let mut addr = 0;
-    let len = data.len();
-    let mut last_line_same = false;
-    let mut output = Vec::new();
-
-    let mut last_line = String::with_capacity(80);
-    while addr <= len {
-        let end = cmp::min(addr + 16, len);
-        let line_data = &data[addr..end];
-        let line_len = line_data.len();
-
-        let mut line = String::with_capacity(80);
-        for byte in line_data.iter() {
-            let _ = write!(line, " {byte:02X}");
-        }
-
-        if line_len % 16 > 0 {
-            let words_left = (16 - line_len) / 2;
-            for _ in 0..3 * words_left {
-                line.push(' ');
-            }
-        }
-
-        if line_len > 0 {
-            line.push_str("  |");
-            for c in line_data {
-                if (*c as char).is_ascii() && !(*c as char).is_control() {
-                    let _ = write!(line, "{}", (*c as char));
-                } else {
-                    line.push('.');
-                }
-            }
-            line.push('|');
-        }
-        if last_line == line {
-            if !last_line_same {
-                last_line_same = true;
-                output.push("*".to_string());
-            }
-        } else {
-            last_line_same = false;
-            output.push(format!("{:08x} {}", addr + addr_offset, line));
-        }
-        last_line = line;
-
-        addr += 16;
-    }
-    output
 }

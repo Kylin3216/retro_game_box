@@ -3,7 +3,7 @@
 //! <http://wiki.nesdev.com/w/index.php/Mapper>
 
 use crate::{
-    common::{Clock, NesRegion, Regional, Reset, ResetKind},
+    common::{Clock, ResetKind, NesRegion, Regional, Reset},
     ppu::Mirroring,
 };
 use enum_dispatch::enum_dispatch;
@@ -76,7 +76,7 @@ impl Default for Mapper {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[must_use]
 pub enum MappedRead {
-    PpuRam,
+    None,
     Chr(usize),
     CIRam(usize),
     ExRam(usize),
@@ -89,7 +89,6 @@ pub enum MappedRead {
 #[must_use]
 pub enum MappedWrite {
     None,
-    PpuRam,
     Chr(usize, u8),
     CIRam(usize, u8),
     ExRam(usize, u8),
@@ -104,11 +103,11 @@ pub trait MemMap {
     }
 
     fn map_peek(&self, _addr: u16) -> MappedRead {
-        MappedRead::PpuRam
+        MappedRead::None
     }
 
     fn map_write(&mut self, _addr: u16, _val: u8) -> MappedWrite {
-        MappedWrite::PpuRam
+        MappedWrite::None
     }
 }
 

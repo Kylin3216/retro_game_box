@@ -5,7 +5,7 @@
 
 use crate::{
     cart::Cart,
-    common::{Clock, Regional, Reset, ResetKind},
+    common::{Clock, ResetKind, Regional, Reset},
     mapper::{Mapped, MappedRead, MappedWrite, Mapper, MemMap},
     mem::MemBanks,
     ppu::Mirroring,
@@ -107,6 +107,7 @@ impl Txrom {
         txrom.into()
     }
 
+    #[inline]
     pub fn set_revision(&mut self, revision: Mmc3Revision) {
         self.revision = revision;
     }
@@ -177,22 +178,27 @@ impl Txrom {
 }
 
 impl Mapped for Txrom {
+    #[inline]
     fn irq_pending(&self) -> bool {
         self.irq_pending
     }
 
+    #[inline]
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    #[inline]
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }
 
+    #[inline]
     fn ppu_bus_read(&mut self, addr: u16) {
         self.clock_irq(addr);
     }
 
+    #[inline]
     fn ppu_bus_write(&mut self, addr: u16, _val: u8) {
         self.clock_irq(addr);
     }
@@ -213,6 +219,7 @@ impl MemMap for Txrom {
     // CPU $C000..=$DFFF (or $8000..=$9FFF) 8K PRG-ROM Bank 3 Fixed to second-to-last Bank
     // CPU $E000..=$FFFF 8K PRG-ROM Bank 4 Fixed to Last
 
+    #[inline]
     fn map_read(&mut self, addr: u16) -> MappedRead {
         self.clock_irq(addr);
         self.map_peek(addr)
@@ -226,7 +233,7 @@ impl MemMap for Txrom {
             }
             0x6000..=0x7FFF => MappedRead::PrgRam(self.prg_ram_banks.translate(addr)),
             0x8000..=0xFFFF => MappedRead::PrgRom(self.prg_rom_banks.translate(addr)),
-            _ => MappedRead::PpuRam,
+            _ => MappedRead::None,
         }
     }
 
@@ -293,9 +300,9 @@ impl MemMap for Txrom {
                     0xE001 => self.regs.irq_enabled = true,
                     _ => unreachable!("impossible address"),
                 }
-                MappedWrite::PpuRam
+                MappedWrite::None
             }
-            _ => MappedWrite::PpuRam,
+            _ => MappedWrite::None,
         }
     }
 }

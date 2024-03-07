@@ -13,7 +13,7 @@ use crate::{
     },
     audio::Audio,
     cart::Cart,
-    common::{Clock, NesRegion, Regional, Reset, ResetKind},
+    common::{Clock, ResetKind, NesRegion, Regional, Reset},
     cpu::Cpu,
     mapper::{Mapped, MappedRead, MappedWrite, Mapper, MemMap},
     mem::MemBanks,
@@ -225,22 +225,32 @@ impl ExRegs {
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 #[must_use]
-struct IrqState {
-    pending: bool,
-    in_frame: bool,
-    prev_addr: Option<u16>,
-    match_count: u8,
-}
-
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-#[must_use]
 struct PpuStatus {
     fetch_count: u32,
+    prev_addr: u16,
+    prev_match: u8,
     reading: bool,
-    idle_count: u8,
+    idle: u8,
     sprite8x16: bool, // $2000 PPUCTRL: false = 8x8, true = 8x16
     rendering: bool,
     scanline: u16,
+    in_frame: bool,
+}
+
+impl PpuStatus {
+    fn write(&mut self, addr: u16, val: u8) {
+        match addr {
+            0x2000 => self.sprite8x16 = val & 0x20 > 0,
+            0x2001 => {
+                self.rendering = val & 0x18 > 0; // 1, 2, or 3
+                if !self.rendering {
+                    self.in_frame = false;
+                    self.prev_addr = 0x0000;
+                }
+            }
+            _ => (),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -248,13 +258,13 @@ struct PpuStatus {
 pub struct Exrom {
     regs: ExRegs,
     mirroring: Mirroring,
+    irq_pending: bool,
     ppu_status: PpuStatus,
-    irq_state: IrqState,
-    ex_ram: Vec<u8>,
+    exram: Vec<u8>,
     prg_ram_banks: MemBanks,
     prg_rom_banks: MemBanks,
     chr_banks: MemBanks,
-    tile_cache: u16,
+    tile_cache: usize,
     last_chr_write: ChrBank,
     region: NesRegion,
     pulse1: Pulse,
@@ -316,26 +326,22 @@ impl Exrom {
         let mut exrom = Self {
             regs: ExRegs::new(),
             mirroring: cart.mirroring(),
-            irq_state: IrqState {
-                pending: false,
-                in_frame: false,
-                prev_addr: None,
-                match_count: 0,
-            },
+            irq_pending: false,
             ppu_status: PpuStatus {
                 fetch_count: 0x00,
+                prev_addr: 0xFFFF,
+                prev_match: 0x0000,
                 reading: false,
-                idle_count: 0x00,
+                idle: 0x00,
                 sprite8x16: false,
                 rendering: false,
                 scanline: 0x0000,
+                in_frame: false,
             },
-            // Cart provides an `add_ex_ram` method used by the PpuBus, but during reads from the
-            // PpuBus we need access to it for bank selection so we need to store it here instead.
-            ex_ram: vec![0x00; Self::EXRAM_SIZE],
+            exram: vec![0x00; Self::EXRAM_SIZE],
             prg_ram_banks: MemBanks::new(0x6000, 0xFFFF, cart.prg_ram.len(), Self::PRG_WINDOW),
             prg_rom_banks: MemBanks::new(0x8000, 0xFFFF, cart.prg_rom.len(), Self::PRG_WINDOW),
-            chr_banks: MemBanks::new(0x0000, 0x1FFF, cart.chr.len(), Self::CHR_WINDOW),
+            chr_banks: MemBanks::new(0x0000, 0x1FFF, cart.chr_rom.len(), Self::CHR_WINDOW),
             tile_cache: 0,
             last_chr_write: ChrBank::Spr,
             region: NesRegion::default(),
@@ -473,68 +479,71 @@ impl Exrom {
         };
     }
 
-    fn read_ex_ram(&self, addr: u16) -> u8 {
-        self.ex_ram[(addr & 0x03FF) as usize]
+    #[inline]
+    fn read_exram(&self, addr: u16) -> u8 {
+        self.exram[(addr & 0x03FF) as usize]
     }
 
-    fn write_ex_ram(&mut self, addr: u16, val: u8) {
-        self.ex_ram[(addr & 0x03FF) as usize] = val;
+    #[inline]
+    fn write_exram(&mut self, addr: u16, val: u8) {
+        self.exram[(addr & 0x03FF) as usize] = val;
     }
 
+    #[inline]
     fn inc_fetch_count(&mut self) {
         self.ppu_status.fetch_count += 1;
     }
 
+    #[inline]
     const fn fetch_count(&self) -> u32 {
         self.ppu_status.fetch_count
     }
 
+    #[inline]
     const fn sprite8x16(&self) -> bool {
         self.ppu_status.sprite8x16
     }
 
+    #[inline]
     fn spr_fetch(&self) -> bool {
         (Self::SPR_FETCH_START..Self::SPR_FETCH_END).contains(&self.fetch_count())
     }
 
+    #[inline]
     const fn nametable_select(&self, addr: u16) -> Nametable {
         self.regs.nametable_mapping.select[((addr >> 10) & 0x03) as usize]
     }
 }
 
 impl Mapped for Exrom {
+    #[inline]
     fn irq_pending(&self) -> bool {
-        self.regs.irq_enabled && self.irq_state.pending
+        self.regs.irq_enabled && self.irq_pending
     }
 
+    #[inline]
     fn mirroring(&self) -> Mirroring {
         self.mirroring
     }
 
+    #[inline]
     fn set_mirroring(&mut self, mirroring: Mirroring) {
         self.mirroring = mirroring;
     }
 
+    #[inline]
     fn cpu_bus_write(&mut self, addr: u16, val: u8) {
-        match addr {
-            0x2000 => self.ppu_status.sprite8x16 = val & 0x20 > 0,
-            0x2001 => {
-                self.ppu_status.rendering = val & 0x18 > 0; // BG or Spr rendering enabled
-                if !self.ppu_status.rendering {
-                    self.irq_state.in_frame = false;
-                    self.irq_state.prev_addr = None;
-                }
-            }
-            _ => (),
-        }
+        self.ppu_status.write(addr, val);
     }
 }
 
 impl Regional for Exrom {
+    #[inline]
     fn region(&self) -> NesRegion {
         self.dmc.region()
     }
 
+    #[inline]
     fn set_region(&mut self, region: NesRegion) {
         self.dmc.set_region(region);
     }
@@ -604,51 +613,47 @@ impl MemMap for Exrom {
                 let is_attr = addr.is_attr();
                 // Cache BG tile fetch for later attribute byte fetch
                 if self.regs.exram_mode.attr && !is_attr && !self.spr_fetch() {
-                    self.tile_cache = addr & 0x03FF;
+                    self.tile_cache = (addr & 0x03FF).into();
                 }
 
-                // TODO: Detect split
-                // if self.regs.vsplit.in_region && !is_attr {
-                //     self.regs.vsplit.tile = ((self.regs.vsplit.scroll & 0xF8) << 2)
-                //         | ((self.fetch_count() / 4) & 0x1F) as u8;
+                // Detect split
+                // if self.regs.vsplit.in_region && !addr.is_attr() {
+                //     self.regs.vsplit.tile = (((self.regs.vsplit.scroll & 0xF8)) << 2)
+                //         | ((self.fetch_count() / 4) & 0x1F) as usize;
                 // }
 
                 // Monitor tile fetches to trigger IRQs
                 // https://wiki.nesdev.org/w/index.php?title=MMC5#Scanline_Detection_and_Scanline_IRQ
                 let status = &mut self.ppu_status;
-                let irq_state = &mut self.irq_state;
-                // Wait for three consecutive fetches to match the same address, which means we're
-                // at the end of the render scanlines fetching dummy NT bytes
-                if addr <= 0x2FFF && Some(addr) == irq_state.prev_addr {
-                    irq_state.match_count += 1;
-                    status.fetch_count = 0;
-                    if irq_state.match_count == 2 {
-                        if irq_state.in_frame {
-                            // Scanline IRQ detected
-                            status.scanline += 1;
+                if !is_attr && addr == status.prev_addr {
+                    status.prev_match += 1;
+                    if status.prev_match == 2 {
+                        if status.in_frame {
+                            status.scanline = status.scanline.wrapping_add(1);
                             if status.scanline == self.regs.irq_scanline {
-                                irq_state.pending = true;
+                                self.irq_pending = true;
                             }
                         } else {
-                            irq_state.in_frame = true;
+                            status.in_frame = true;
                             status.scanline = 0;
                         }
+                        status.fetch_count = 0;
                     }
                 } else {
-                    irq_state.match_count = 0;
+                    status.prev_match = 0;
                 }
-                irq_state.prev_addr = Some(addr);
+                status.prev_addr = addr;
                 status.reading = true;
             }
             0xFFFA | 0xFFFB => {
-                self.irq_state.in_frame = false; // NMI clears in_frame
-                self.irq_state.prev_addr = None;
+                self.ppu_status.in_frame = false; // NMI clears in_frame
+                self.ppu_status.prev_addr = 0x0000;
             }
             _ => (),
         }
         let val = self.map_peek(addr);
         match addr {
-            0x5204 => self.irq_state.pending = false, // Reading from IRQ status clears it
+            0x5204 => self.irq_pending = false, // Reading from IRQ status clears it
             0x5010 => self.dmc.acknowledge_irq(),
             _ => (),
         }
@@ -662,7 +667,7 @@ impl MemMap for Exrom {
                     // Bits 6-7 of 4K CHR bank. Already shifted left by 8
                     let bank_hi = self.regs.chr_hi << 10;
                     // Bits 0-5 of 4k CHR bank
-                    let bank_lo = ((self.read_ex_ram(self.tile_cache) & 0x3F) as usize) << 12;
+                    let bank_lo = ((self.exram[self.tile_cache] & 0x3F) as usize) << 12;
                     let addr = bank_hi | bank_lo | (addr as usize) & 0x0FFF;
                     MappedRead::Chr(addr)
                 } else {
@@ -671,21 +676,20 @@ impl MemMap for Exrom {
             }
             0x2000..=0x3EFF => {
                 let is_attr = addr.is_attr();
-                // TODO: vsplit
-                // if self.regs.vsplit.in_region {
-                //     if is_attr {
-                //         // let addr =
-                //         //     Self::ATTR_OFFSET | u16::from(ATTR_LOC[(self.regs.vsplit.tile as usize) >> 2]);
-                //         // let attr = self.read_exram(addr - 0x2000) as usize;
-                //         // let shift = ATTR_SHIFT[(self.regs.vsplit.tile as usize) & 0x7F] as usize;
-                //         // MappedRead::Data(ATTR_BITS[(attr >> shift) & 0x03])
-                //     } else {
-                //         MappedRead::Data(self.read_exram(self.regs.vsplit.tile.into()))
-                //     }
-                // }
-                if self.regs.exram_mode.attr && is_attr && !self.spr_fetch() {
+                if self.regs.vsplit.in_region {
+                    if is_attr {
+                        todo!()
+                        // let addr =
+                        //     Self::ATTR_OFFSET | u16::from(ATTR_LOC[(self.regs.vsplit.tile as usize) >> 2]);
+                        // let attr = self.read_exram(addr - 0x2000) as usize;
+                        // let shift = ATTR_SHIFT[(self.regs.vsplit.tile as usize) & 0x7F] as usize;
+                        // MappedRead::Data(ATTR_BITS[(attr >> shift) & 0x03])
+                    } else {
+                        MappedRead::Data(self.read_exram(self.regs.vsplit.tile.into()))
+                    }
+                } else if self.regs.exram_mode.attr && is_attr && !self.spr_fetch() {
                     // ExAttr mode returns attr bits for all nametables, regardless of mapping
-                    let attr = (self.read_ex_ram(self.tile_cache) >> 6) & 0x03;
+                    let attr = (self.exram[self.tile_cache] >> 6) & 0x03;
                     MappedRead::Data(Self::ATTR_MIRROR[attr as usize])
                 } else {
                     let nametable_mode = self.regs.exram_mode.nametable;
@@ -695,10 +699,10 @@ impl MemMap for Exrom {
                             MappedRead::CIRam((Ppu::NT_SIZE | (addr & 0x03FF)).into())
                         }
                         Nametable::ExRam if nametable_mode => {
-                            MappedRead::Data(self.read_ex_ram(addr))
+                            MappedRead::Data(self.read_exram(addr))
                         }
                         Nametable::Fill if nametable_mode => MappedRead::Data(if is_attr {
-                            Self::ATTR_MIRROR[self.regs.fill.attr & 0x03]
+                            Self::ATTR_MIRROR[self.regs.fill.attr]
                         } else {
                             self.regs.fill.tile
                         }),
@@ -750,14 +754,14 @@ impl MemMap for Exrom {
                 // Reading $5204 will clear the pending flag (acknowledging the IRQ).
                 // Clearing is done in the read() function
                 MappedRead::Data(
-                    u8::from(self.irq_state.pending) << 7 | u8::from(self.irq_state.in_frame) << 6,
+                    u8::from(self.irq_pending) << 7 | u8::from(self.ppu_status.in_frame) << 6,
                 )
             }
             0x5205 => MappedRead::Data((self.regs.mult_result & 0xFF) as u8),
             0x5206 => MappedRead::Data(((self.regs.mult_result >> 8) & 0xFF) as u8),
             0x5C00..=0x5FFF if matches!(self.regs.exram_mode.rw, ExRamRW::R | ExRamRW::RW) => {
                 // Nametable/Attr modes are not used for RAM, thus are not readable
-                MappedRead::Data(self.read_ex_ram(addr))
+                MappedRead::Data(self.read_exram(addr))
             }
             0x6000..=0xDFFF => {
                 if self.rom_select(addr) {
@@ -768,7 +772,7 @@ impl MemMap for Exrom {
             }
             0xE000..=0xFFFF => MappedRead::PrgRom(self.prg_rom_banks.translate(addr)),
             0x5207..=0x5209 => MappedRead::Data(0),
-            _ => MappedRead::PpuRam,
+            _ => MappedRead::None,
         }
     }
 
@@ -780,10 +784,9 @@ impl MemMap for Exrom {
                     return MappedWrite::CIRam((Ppu::NT_SIZE | (addr & 0x03FF)).into(), val)
                 }
                 Nametable::ExRam if self.regs.exram_mode.nametable => {
-                    self.write_ex_ram(addr, val);
-                    return MappedWrite::None;
+                    self.write_exram(addr, val);
                 }
-                _ => return MappedWrite::None,
+                _ => (),
             },
             0x5000 => self.pulse1.write_ctrl(val),
             // 0x5001 Has no effect since there is no Sweep unit
@@ -954,9 +957,9 @@ impl MemMap for Exrom {
             0x5C00..=0x5FFF => match self.regs.exram_mode.rw {
                 ExRamRW::W => {
                     let val = if self.ppu_status.rendering { val } else { 0x00 };
-                    self.write_ex_ram(addr, val);
+                    self.write_exram(addr, val);
                 }
-                ExRamRW::RW => self.write_ex_ram(addr, val),
+                ExRamRW::RW => self.write_exram(addr, val),
                 _ => (),
             },
             0x6000..=0xDFFF if !self.rom_select(addr) => {
@@ -964,7 +967,7 @@ impl MemMap for Exrom {
             }
             _ => (),
         }
-        MappedWrite::PpuRam
+        MappedWrite::None
     }
 }
 
@@ -983,18 +986,17 @@ impl Audio for Exrom {
 impl Clock for Exrom {
     fn clock(&mut self) -> usize {
         if self.ppu_status.reading {
-            self.ppu_status.idle_count = 0;
+            self.ppu_status.idle = 0;
         } else {
-            self.ppu_status.idle_count += 1;
+            self.ppu_status.idle += 1;
             // 3 CPU clocks == 1 ppu clock
-            if self.ppu_status.idle_count == 3 {
-                self.ppu_status.idle_count = 0;
-                self.irq_state.in_frame = false;
-                self.irq_state.prev_addr = None;
+            if self.ppu_status.idle == 3 {
+                self.ppu_status.idle = 0;
+                self.ppu_status.in_frame = false;
+                self.ppu_status.prev_addr = 0x0000;
             }
         }
         self.ppu_status.reading = false;
-
         if self.cpu_cycle & 0x01 == 0x00 {
             self.pulse1.clock();
             self.pulse2.clock();
@@ -1025,9 +1027,9 @@ impl core::fmt::Debug for Exrom {
         f.debug_struct("Exrom")
             .field("regs", &self.regs)
             .field("mirroring", &self.mirroring)
+            .field("irq_pending", &self.irq_pending)
             .field("ppu_status", &self.ppu_status)
-            .field("irq_state", &self.irq_state)
-            .field("exram_len", &self.ex_ram.len())
+            .field("exram_len", &self.exram.len())
             .field("prg_ram_banks", &self.prg_ram_banks)
             .field("prg_rom_banks", &self.prg_rom_banks)
             .field("chr_banks", &self.chr_banks)

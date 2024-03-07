@@ -1,6 +1,6 @@
 use crate::{
     apu::{envelope::Envelope, length_counter::LengthCounter},
-    common::{Clock, NesRegion, Regional, Reset, ResetKind},
+    common::{Clock, ResetKind, NesRegion, Regional, Reset},
 };
 use serde::{Deserialize, Serialize};
 
@@ -53,20 +53,24 @@ impl Noise {
         }
     }
 
+    #[inline]
     #[must_use]
     pub const fn silent(&self) -> bool {
         self.force_silent
     }
 
+    #[inline]
     pub fn toggle_silent(&mut self) {
         self.force_silent = !self.force_silent;
     }
 
+    #[inline]
     #[must_use]
     pub const fn length_counter(&self) -> u8 {
         self.length.counter()
     }
 
+    #[inline]
     const fn freq_timer(region: NesRegion, val: u8) -> u16 {
         match region {
             NesRegion::Ntsc => Self::FREQ_TABLE_NTSC[(val & 0x0F) as usize] - 1,
@@ -74,10 +78,12 @@ impl Noise {
         }
     }
 
+    #[inline]
     pub fn clock_quarter_frame(&mut self) {
         self.envelope.clock();
     }
 
+    #[inline]
     pub fn clock_half_frame(&mut self) {
         self.length.clock();
     }
@@ -101,7 +107,6 @@ impl Noise {
     }
 
     // $400E Noise timer
-
     pub fn write_timer(&mut self, val: u8) {
         self.freq_timer = Self::freq_timer(self.region, val);
         self.shift_mode = if (val >> 7) & 1 == 1 {
@@ -147,10 +152,12 @@ impl Clock for Noise {
 }
 
 impl Regional for Noise {
+    #[inline]
     fn region(&self) -> NesRegion {
         self.region
     }
 
+    #[inline]
     fn set_region(&mut self, region: NesRegion) {
         self.region = region;
     }

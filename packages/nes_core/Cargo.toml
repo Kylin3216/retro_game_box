@@ -1,6 +1,6 @@
 [package]
 name = "nes_core"
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
 description = "A NES emulator written in Rust. "
 authors = ["icKylin <icekylin@dreamfund.tech>"]
@@ -16,11 +16,14 @@ path = "test/rom.rs"
 
 [dependencies]
 enum_dispatch = "0.3.12"
+anyhow = { version = "1.0.80", default-features = false }
+lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 log = "0.4.21"
-lazy_static = { version = "1.4.0" }
 rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
 bitflags = { version = "2.4.2", features = ["serde"] }
 serde = { version = "1.0.197", default-features = false, features = ["derive", "alloc"] }
+num-traits = { version = "0.2.18", default-features = false, features = ["libm"] }
+libm = "0.2.8"
 
 [dev-dependencies]
 image = "0.24.9"

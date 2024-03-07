@@ -1,5 +1,5 @@
 use nes_core::{
-    control_deck::{Config, ControlDeck},
+    control_deck::{ControlDeck},
     input::{Player, JoypadBtn},
     mapper::{Mapper, MapperRevision},
     mem::RamState,
@@ -134,13 +134,10 @@ fn get_rom_tests(directory: &str) -> (PathBuf, Vec<RomTest>) {
 fn load_control_deck<P: AsRef<Path>>(path: P) -> ControlDeck {
     let path = path.as_ref();
     let mut rom = BufReader::new(File::open(path).expect("failed to open path"));
-    let mut deck = ControlDeck::with_config(Config {
-        ram_state: RamState::AllZeros,
-        ..Default::default()
-    });
+    let mut deck = ControlDeck::new(RamState::AllZeros);
     let mut data = vec![];
     rom.read_to_end(&mut data).unwrap();
-    deck.load_rom(&path.to_string_lossy(), &data)
+    deck.load_rom(path.to_string_lossy().to_string(), data)
         .expect("failed to load rom");
     deck.set_filter(VideoFilter::Pixellate);
     deck.set_region(NesRegion::Ntsc);

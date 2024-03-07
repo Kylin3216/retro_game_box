@@ -1,20 +1,20 @@
 use alloc::collections::BTreeMap;
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::{btree_map, NesError, NesResult};
-use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use anyhow::{Result, bail};
+use lazy_static::lazy_static;
 
 lazy_static! {
     static ref GENIE_MAP: BTreeMap<char, u8> = {
-       btree_map! {
-        'A' => 0x0, 'P' => 0x1, 'Z' => 0x2, 'L' => 0x3, 'G' => 0x4, 'I' => 0x5, 'T' => 0x6,
-        'Y' => 0x7, 'E' => 0x8, 'O' => 0x9, 'X' => 0xA, 'U' => 0xB, 'K' => 0xC, 'S' => 0xD,
-        'V' => 0xE, 'N' => 0xF
+        btree_map! {
+            'A' => 0x0, 'P' => 0x1, 'Z' => 0x2, 'L' => 0x3, 'G' => 0x4, 'I' => 0x5, 'T' => 0x6,
+            'Y' => 0x7, 'E' => 0x8, 'O' => 0x9, 'X' => 0xA, 'U' => 0xB, 'K' => 0xC, 'S' => 0xD,
+            'V' => 0xE, 'N' => 0xF
         }
     };
 }
+
 /// Game Genie Code
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenieCode {
@@ -30,7 +30,7 @@ impl GenieCode {
     /// # Errors
     ///
     /// This function will return an error if the given code is not the correct format.
-    pub fn new(code: String) -> NesResult<Self> {
+    pub fn new(code: String) -> Result<Self> {
         let hex = Self::parse(&code)?;
         let addr = 0x8000
             + (((u16::from(hex[3]) & 7) << 12)
@@ -58,20 +58,16 @@ impl GenieCode {
         })
     }
 
-    pub fn parse(code: &str) -> NesResult<Vec<u8>> {
+    pub fn parse(code: &str) -> Result<Vec<u8>> {
         if code.len() != 6 && code.len() != 8 {
-            return Err(NesError::new(format!(
-                "invalid game genie code: {code}. Length must be 6 or 8 characters."
-            )));
+            bail!("invalid game genie code: {code}. Length must be 6 or 8 characters.")
         }
         let mut hex: Vec<u8> = Vec::with_capacity(code.len());
         for s in code.chars() {
             if let Some(h) = GENIE_MAP.get(&s) {
                 hex.push(*h);
             } else {
-                return Err(NesError::new(format!(
-                    "invalid game genie code: {code}. Invalid character: {s}"
-                )));
+                bail!( "invalid game genie code: {code}. Invalid character: {s}")
             }
         }
         Ok(hex)
